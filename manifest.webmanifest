@@ -1,0 +1,14 @@
+{
+  "name": "Bridge Sign Helper",
+  "short_name": "SignHelper",
+  "description": "Field tool for photographing bridge weight-limit signs.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f4f5f7",
+  "theme_color": "#1f6feb",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
