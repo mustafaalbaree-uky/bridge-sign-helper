@@ -561,11 +561,20 @@
       byDate.get(f.batch_date).push(f);
     }
     const dates = [...byDate.keys()].sort().reverse();
-    if (reviewSelected === null) reviewSelected = new Set(dates); // default: all
-    for (const d of [...reviewSelected]) if (!byDate.has(d)) reviewSelected.delete(d);
-    const selectedFiles = () => dates.filter((d) => reviewSelected.has(d)).flatMap((d) => byDate.get(d));
+    const allPaths = new Set(files.map((f) => f.storage_path));
+    if (reviewSelected === null) reviewSelected = new Set(allPaths); // default: all
+    else for (const p of [...reviewSelected]) if (!allPaths.has(p)) reviewSelected.delete(p);
+    const selectedFiles = () => files.filter((f) => reviewSelected.has(f.storage_path));
+
+    // How many photos of a day are selected: none / some / all.
+    const daySelState = (date) => {
+      const ps = byDate.get(date).map((f) => f.storage_path);
+      const n = ps.filter((p) => reviewSelected.has(p)).length;
+      return n === 0 ? "none" : n === ps.length ? "all" : "some";
+    };
 
     const fileRow = (f) => `<li class="file-row">
+        <input type="checkbox" class="photo-cb" data-path="${esc(f.storage_path)}" data-date="${f.batch_date}" ${reviewSelected.has(f.storage_path) ? "checked" : ""} />
         ${thumbs[f.storage_path] ? `<img src="${thumbs[f.storage_path]}" alt="" data-revoke />` : `<div class="thumb-missing">?</div>`}
         <div class="file-meta"><div class="file-name">${esc(f.filename)}</div>
           <div class="file-sub">${new Date(f.captured_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</div></div>
@@ -581,7 +590,7 @@
         (emailed ? `<span class="chip ok">Emailed</span>` : "");
       return `<section class="day-group">
           <div class="day-head">
-            <label class="day-check"><input type="checkbox" class="day-cb" data-date="${date}" ${reviewSelected.has(date) ? "checked" : ""} />
+            <label class="day-check"><input type="checkbox" class="day-cb" data-date="${date}" ${daySelState(date) === "all" ? "checked" : ""} />
               <span class="day-label">${label}</span></label>
             <span class="day-flags">${flags}</span>
             <span class="day-count">${df.length} photo${df.length > 1 ? "s" : ""}</span></div>
@@ -616,7 +625,7 @@
             ${emailReady ? `<button id="actSend" class="btn small secondary">Send email</button>` : ""}
             <button id="actCompose" class="btn small secondary">Compose email</button>
           </div>
-          <p class="hint">Tick the days below to include, then these buttons act on all selected days at once.</p>
+          <p class="hint">Tick individual photos or a whole day, then these buttons act on everything selected.</p>
         </div>
         ${dates.map(dayBlock).join("")}
         ${App.localCaptures.length ? `<button id="clearLocal" class="btn danger block">Clear photos saved on this device (${App.localCaptures.length})</button>` : ""}
@@ -627,36 +636,56 @@
     if (!files.length) return;
 
     const updateSummary = () => {
-      const days = dates.filter((d) => reviewSelected.has(d));
-      const photos = days.reduce((n, d) => n + byDate.get(d).length, 0);
-      el("selSummary").textContent = `${days.length} day${days.length !== 1 ? "s" : ""}, ${photos} photo${photos !== 1 ? "s" : ""} selected`;
+      const sel = selectedFiles();
+      const days = new Set(sel.map((f) => f.batch_date)).size;
+      el("selSummary").textContent =
+        `${sel.length} photo${sel.length !== 1 ? "s" : ""} selected` + (days > 1 ? ` (${days} days)` : "");
     };
+    const syncDayCb = (date) => {
+      const cb = el("view").querySelector(`.day-cb[data-date="${date}"]`);
+      if (!cb) return;
+      const st = daySelState(date);
+      cb.checked = st === "all";
+      cb.indeterminate = st === "some";
+    };
+    dates.forEach(syncDayCb); // set initial indeterminate states
     updateSummary();
 
+    el("view").querySelectorAll(".photo-cb").forEach((cb) =>
+      cb.addEventListener("change", () => {
+        if (cb.checked) reviewSelected.add(cb.dataset.path);
+        else reviewSelected.delete(cb.dataset.path);
+        syncDayCb(cb.dataset.date);
+        updateSummary();
+      })
+    );
     el("view").querySelectorAll(".day-cb").forEach((cb) =>
       cb.addEventListener("change", () => {
-        if (cb.checked) reviewSelected.add(cb.dataset.date);
-        else reviewSelected.delete(cb.dataset.date);
+        const ps = byDate.get(cb.dataset.date).map((f) => f.storage_path);
+        ps.forEach((p) => (cb.checked ? reviewSelected.add(p) : reviewSelected.delete(p)));
+        cb.indeterminate = false;
+        el("view").querySelectorAll(`.photo-cb[data-date="${cb.dataset.date}"]`).forEach((pc) => (pc.checked = cb.checked));
         updateSummary();
       })
     );
     el("selAll").addEventListener("click", () => {
-      dates.forEach((d) => reviewSelected.add(d));
-      el("view").querySelectorAll(".day-cb").forEach((cb) => (cb.checked = true));
+      reviewSelected = new Set(allPaths);
+      el("view").querySelectorAll(".photo-cb").forEach((c) => (c.checked = true));
+      dates.forEach(syncDayCb);
       updateSummary();
     });
     el("selNone").addEventListener("click", () => {
       reviewSelected.clear();
-      el("view").querySelectorAll(".day-cb").forEach((cb) => (cb.checked = false));
+      el("view").querySelectorAll(".photo-cb, .day-cb").forEach((c) => { c.checked = false; c.indeterminate = false; });
       updateSummary();
     });
 
     const act = async (fn, kind, btn) => {
       const f = selectedFiles();
-      if (!f.length) return setStatus("Tick at least one day first.", "warn");
+      if (!f.length) return setStatus("Select at least one photo first.", "warn");
       const ok = await fn(f, btn);
       if (ok !== false) {
-        await markDays([...new Set(f.map((x) => x.batch_date))], kind);
+        await markPhotos(f.map((x) => x.storage_path), kind);
         renderReview(); // refresh the Saved/Emailed badges
       }
     };
@@ -671,12 +700,13 @@
     if (App.localCaptures.length) el("clearLocal").addEventListener("click", clearLocalCopies);
   }
 
-  // Mark all captures on the given days as exported or emailed.
-  async function markDays(days, kind) {
-    if (!days.length) return;
+  // Mark the given photos (by storage path) as exported or emailed.
+  async function markPhotos(paths, kind) {
+    if (!paths.length) return;
     const col = kind === "exported" ? "exported_at" : "emailed_at";
+    const list = paths.map((p) => encodeURIComponent(`"${p}"`)).join(",");
     try {
-      await SB.update("captures", `batch_date=in.(${days.join(",")})`, { [col]: new Date().toISOString() });
+      await SB.update("captures", `storage_path=in.(${list})`, { [col]: new Date().toISOString() });
     } catch { /* non-fatal: badge just won't update */ }
   }
 
