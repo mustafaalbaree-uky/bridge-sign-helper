@@ -47,6 +47,9 @@
 
 * { box-sizing: border-box; }
 
+/* Keep text inputs at >=16px: below that, iOS auto-zooms on focus. */
+input, select, textarea { font-size: 16px; }
+
 html, body {
   margin: 0;
   background: var(--bg);
@@ -79,6 +82,20 @@ html, body {
   display: inline-block; min-width: 20px; padding: 0 6px; border-radius: 10px;
   background: var(--accent); color: var(--accent-ink); font-size: 0.8rem; line-height: 20px; font-weight: 700;
 }
+
+/* Themes popover */
+.theme-panel {
+  position: absolute; right: 10px; top: 100%; margin-top: 6px; z-index: 30;
+  background: var(--card); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 12px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28); padding: 12px; min-width: 210px;
+}
+.tp-title { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 2px 0 6px; }
+.tp-modes { display: flex; gap: 6px; margin-bottom: 12px; }
+.tp-mode { flex: 1; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 8px; padding: 8px; font-weight: 600; cursor: pointer; font-size: 0.9rem; }
+.tp-mode.active { border-color: var(--accent-strong); box-shadow: inset 0 0 0 1px var(--accent-strong); }
+.tp-swatches { display: flex; flex-wrap: wrap; gap: 8px; }
+.tp-swatch { width: 30px; height: 30px; border-radius: 50%; border: 2px solid var(--line); cursor: pointer; padding: 0; }
+.tp-swatch.active { outline: 3px solid var(--ink); outline-offset: 2px; }
 
 /* Layout */
 .view { padding: 14px; max-width: 720px; margin: 0 auto; padding-bottom: 40px; }

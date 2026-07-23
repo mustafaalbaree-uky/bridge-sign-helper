@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#262a31" />
   <title>Bridge Sign Helper</title>
   <link rel="manifest" href="manifest.webmanifest" />
@@ -15,7 +15,7 @@
     <header class="app-header">
       <div class="header-top">
         <div class="brand">Bridge Sign Helper</div>
-        <button id="themeToggle" class="theme-toggle" aria-label="Toggle dark mode" title="Toggle dark mode">🌙</button>
+        <button id="themeBtn" class="theme-toggle" aria-label="Themes" title="Themes">🎨</button>
       </div>
       <nav class="tabs">
         <button id="navSetup" class="tab">Setup</button>
@@ -24,6 +24,15 @@
       </nav>
     </header>
     <div id="statusBar" class="status" hidden></div>
+    <div id="themePanel" class="theme-panel" hidden>
+      <div class="tp-title">Appearance</div>
+      <div class="tp-modes">
+        <button class="tp-mode" data-mode="light">☀️ Light</button>
+        <button class="tp-mode" data-mode="dark">🌙 Dark</button>
+      </div>
+      <div class="tp-title">Accent</div>
+      <div id="tpSwatches" class="tp-swatches"></div>
+    </div>
   </div>
 
   <main id="view" class="view"></main>

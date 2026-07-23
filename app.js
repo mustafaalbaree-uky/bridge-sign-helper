@@ -274,7 +274,34 @@
   }
 
   // ---- rendering: signs list -------------------------------------------------
+  // Build the shell (search box + list container) ONCE. Typing updates only the
+  // list, so the input element is never recreated — which is what was resetting
+  // the iOS number keyboard back to letters on every keystroke.
   function renderSigns() {
+    const conn = App.online
+      ? ""
+      : `<div class="banner warn">Offline. Showing the last synced sign list; photos upload when you're back on signal.</div>`;
+    const note = App.position
+      ? `<div class="hint">Nearest first · GPS ±${Math.round(App.position.accuracy)} m. <strong>Confirm the ID by eye.</strong></div>`
+      : "";
+
+    el("view").innerHTML = `
+      ${conn}
+      <div class="toolbar">
+        <input id="searchInput" class="search" type="text" inputmode="text" autocapitalize="characters"
+          autocomplete="off" placeholder="Search ID, route, county…" value="${esc(App.search)}" />
+        <button id="locateBtn" class="btn secondary">📍 Sort by nearest</button>
+      </div>${note}
+      <ul id="signList" class="sign-list"></ul>`;
+
+    renderSignList();
+    el("searchInput").addEventListener("input", (e) => { App.search = e.target.value; renderSignList(); });
+    el("locateBtn").addEventListener("click", requestLocation);
+  }
+
+  function renderSignList() {
+    const ul = el("signList");
+    if (!ul) return;
     const q = App.search.trim().toLowerCase();
     let list = App.signs.filter((s) => (s.active_status || "Active") !== "Inactive");
     if (q)
@@ -288,46 +315,23 @@
         .sort((a, b) => a._d - b._d)
         .concat(list.filter((s) => s.lat == null || s.lng == null));
 
-    const rows = list
-      .map((s) => {
-        const localN = App.localCaptures.filter((c) => c.signId === s.id).length;
-        const caps = Math.max(App.photoCounts[s.id] || 0, localN);
-        const badge = caps ? `<span class="badge done">${caps} Photo${caps > 1 ? "s" : ""}</span>` : "";
-        const dist = s._d != null ? `<span class="dist">${fmtDistance(s._d)}</span>` : "";
-        return `<li class="sign-item" data-id="${esc(s.id)}">
-            <div class="sign-main">
-              <div class="sign-id">${esc(s.id)} ${badge}</div>
-              <div class="sign-sub">${esc(s.county)} · ${esc(s.route)} · MP ${esc(s.mile_point)} · ${esc(s.direction)} · ${esc(s.side_of_road)}</div>
-            </div>${dist}
-          </li>`;
-      })
-      .join("");
+    ul.innerHTML =
+      list
+        .map((s) => {
+          const localN = App.localCaptures.filter((c) => c.signId === s.id).length;
+          const caps = Math.max(App.photoCounts[s.id] || 0, localN);
+          const badge = caps ? `<span class="badge done">${caps} Photo${caps > 1 ? "s" : ""}</span>` : "";
+          const dist = s._d != null ? `<span class="dist">${fmtDistance(s._d)}</span>` : "";
+          return `<li class="sign-item" data-id="${esc(s.id)}">
+              <div class="sign-main">
+                <div class="sign-id">${esc(s.id)} ${badge}</div>
+                <div class="sign-sub">${esc(s.county)} · ${esc(s.route)} · MP ${esc(s.mile_point)} · ${esc(s.direction)} · ${esc(s.side_of_road)}</div>
+              </div>${dist}
+            </li>`;
+        })
+        .join("") || `<li class="empty">No signs. Import a sheet under <strong>Setup</strong>.</li>`;
 
-    const conn = App.online
-      ? ""
-      : `<div class="banner warn">Offline. Showing the last synced sign list; photos upload when you're back on signal.</div>`;
-    const note = App.position
-      ? `<div class="hint">Nearest first · GPS ±${Math.round(App.position.accuracy)} m. <strong>Confirm the ID by eye.</strong></div>`
-      : "";
-
-    el("view").innerHTML = `
-      ${conn}
-      <div class="toolbar">
-        <input id="searchInput" class="search" type="search" placeholder="Search ID, route, county…" value="${esc(App.search)}" />
-        <button id="locateBtn" class="btn secondary">📍 Sort by nearest</button>
-      </div>${note}
-      <ul class="sign-list">${rows || `<li class="empty">No signs. Import a sheet under <strong>Setup</strong>.</li>`}</ul>`;
-
-    const search = el("searchInput");
-    search.addEventListener("input", (e) => {
-      App.search = e.target.value;
-      renderSigns();
-      const s2 = el("searchInput");
-      s2.focus();
-      s2.setSelectionRange(s2.value.length, s2.value.length);
-    });
-    el("locateBtn").addEventListener("click", requestLocation);
-    el("view").querySelectorAll(".sign-item").forEach((li) =>
+    ul.querySelectorAll(".sign-item").forEach((li) =>
       li.addEventListener("click", () => { App.currentSignId = li.dataset.id; App.screen = "capture"; render(); })
     );
   }
@@ -1187,20 +1191,66 @@
     if (App.localCaptures.some((c) => c.status !== "synced")) syncAllPending();
   }
 
+  // Accent presets. `gold` is the built-in default (uses the CSS defaults, which
+  // include per-theme tuning); the others override the accent CSS variables.
+  const ACCENTS = {
+    gold:   { label: "Gold",   accent: "#e6bc3a" },
+    blue:   { label: "Blue",   accent: "#3b82f6", strong: "#2563eb", ink: "#ffffff" },
+    green:  { label: "Green",  accent: "#22c55e", strong: "#16884a", ink: "#04220f" },
+    red:    { label: "Red",    accent: "#ef5350", strong: "#c0392b", ink: "#ffffff" },
+    purple: { label: "Purple", accent: "#a78bfa", strong: "#7c3aed", ink: "#ffffff" },
+    teal:   { label: "Teal",   accent: "#2dd4bf", strong: "#0f9488", ink: "#04241f" },
+    orange: { label: "Orange", accent: "#fb923c", strong: "#d1701a", ink: "#241300" },
+  };
+
   function applyTheme(t) {
     document.documentElement.setAttribute("data-theme", t);
-    const b = el("themeToggle");
-    if (b) b.textContent = t === "dark" ? "☀️" : "🌙";
+    document.querySelectorAll(".tp-mode").forEach((b) => b.classList.toggle("active", b.dataset.mode === t));
+  }
+  function setTheme(t) {
+    localStorage.setItem("bsh_theme", t);
+    applyTheme(t);
+  }
+  function applyAccent(key) {
+    const a = ACCENTS[key] || ACCENTS.gold;
+    const root = document.documentElement.style;
+    if (key === "gold" || !ACCENTS[key]) {
+      root.removeProperty("--accent");
+      root.removeProperty("--accent-strong");
+      root.removeProperty("--accent-ink");
+    } else {
+      root.setProperty("--accent", a.accent);
+      root.setProperty("--accent-strong", a.strong);
+      root.setProperty("--accent-ink", a.ink);
+    }
+    document.querySelectorAll(".tp-swatch").forEach((b) => b.classList.toggle("active", b.dataset.accent === key));
+  }
+  function setAccent(key) {
+    localStorage.setItem("bsh_accent", key);
+    applyAccent(key);
   }
   function initTheme() {
     let t = localStorage.getItem("bsh_theme");
     if (!t) t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
     applyTheme(t);
+    applyAccent(localStorage.getItem("bsh_accent") || "gold");
   }
-  function toggleTheme() {
-    const next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
-    localStorage.setItem("bsh_theme", next);
-    applyTheme(next);
+  function buildThemePanel() {
+    const box = el("tpSwatches");
+    if (box)
+      box.innerHTML = Object.entries(ACCENTS)
+        .map(([k, a]) => `<button class="tp-swatch" data-accent="${k}" title="${a.label}" style="background:${a.accent}"></button>`)
+        .join("");
+    document.querySelectorAll(".tp-mode").forEach((b) => b.addEventListener("click", () => setTheme(b.dataset.mode)));
+    document.querySelectorAll(".tp-swatch").forEach((b) => b.addEventListener("click", () => setAccent(b.dataset.accent)));
+    applyTheme(document.documentElement.getAttribute("data-theme") || "light");
+    applyAccent(localStorage.getItem("bsh_accent") || "gold");
+    const btn = el("themeBtn");
+    const panel = el("themePanel");
+    btn.addEventListener("click", (e) => { e.stopPropagation(); panel.hidden = !panel.hidden; });
+    document.addEventListener("click", (e) => {
+      if (!panel.hidden && !panel.contains(e.target) && e.target !== btn) panel.hidden = true;
+    });
   }
 
   function detectDevice() {
@@ -1214,8 +1264,8 @@
 
   async function init() {
     initTheme();
+    buildThemePanel();
     detectDevice();
-    el("themeToggle").addEventListener("click", toggleTheme);
     el("navSetup").addEventListener("click", () => { App.screen = "setup"; render(); });
     el("navSigns").addEventListener("click", goSigns);
     el("navReview").addEventListener("click", () => { reviewSelected = null; App.screen = "review"; render(); });

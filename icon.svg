@@ -1,6 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-  <rect width="512" height="512" rx="96" fill="#e6bc3a"/>
-  <text x="256" y="272" text-anchor="middle" dominant-baseline="central"
-    font-family="Arial Black, Arial, Helvetica, sans-serif" font-weight="900"
-    font-size="360" fill="#111111">K</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" width="800" height="800">
+  <rect width="800" height="800" rx="150" fill="#e6bc3a"/>
+  <g fill="#111111" stroke="#111111" stroke-linejoin="round">
+    <rect x="205" y="158" width="95" height="500" rx="6" stroke="none"/>
+    <line x1="298" y1="410" x2="548" y2="652" stroke-width="94"/>
+    <line x1="298" y1="405" x2="505" y2="262" stroke-width="94"/>
+    <polygon points="628,150 452,196 560,318" stroke="none"/>
+  </g>
 </svg>
