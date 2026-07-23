@@ -109,6 +109,16 @@ window.SB = (() => {
     return res.blob();
   }
 
+  async function deletePhotos(paths) {
+    if (!paths.length) return;
+    const res = await fetch(`${SUPABASE_URL}/storage/v1/object/${BUCKET}`, {
+      method: "DELETE",
+      headers: await headers({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ prefixes: paths }),
+    });
+    if (!res.ok) throw new Error(`delete photos: ${res.status} ${await res.text()}`);
+  }
+
   // Invoke an Edge Function with the current session.
   async function invoke(name, payload) {
     const res = await fetch(`${SUPABASE_URL}/functions/v1/${name}`, {
@@ -124,5 +134,5 @@ window.SB = (() => {
   // True if we can produce a usable access token (refreshing if needed).
   const ensureSession = async () => !!(await token());
 
-  return { login, logout, refresh, isLoggedIn, ensureSession, currentUser, select, upsert, remove, uploadPhoto, downloadPhoto, invoke };
+  return { login, logout, refresh, isLoggedIn, ensureSession, currentUser, select, upsert, remove, uploadPhoto, downloadPhoto, deletePhotos, invoke };
 })();

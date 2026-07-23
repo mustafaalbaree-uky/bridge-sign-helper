@@ -720,6 +720,14 @@
           <input id="whToken" type="text" autocomplete="off" data-lpignore="true" value="${esc(tokenVal)}" /></label>
         <button id="saveEmail" class="btn primary block">Save email settings</button>
         <button id="testEmail" class="btn secondary block">Send a test email</button>
+      </details>
+      <details class="setup-card collapsible">
+        <summary>Developer settings</summary>
+        <p class="hint">For testing only.</p>
+        <button id="dlMock" class="btn secondary block">Download mock Excel sheet</button>
+        <p class="hint">A sample sheet in the real R12-6 layout (split header, a duplicate ID, an inactive row, and a base-ID grouping row) to test importing.</p>
+        <button id="clearAll" class="btn danger block">Clear all data</button>
+        <p class="hint">Deletes every sign, photo, and recipient from the database and this device. Email settings are kept.</p>
       </details>`;
 
     el("fileInput").addEventListener("change", (e) => handleFile(e.target.files[0]));
@@ -751,6 +759,56 @@
       } catch (e) { setStatus(`Test failed: ${e.message}`, "warn", 9000); }
     });
     el("logoutBtn").addEventListener("click", doLogout);
+    el("dlMock").addEventListener("click", downloadMockSheet);
+    el("clearAll").addEventListener("click", clearAllData);
+  }
+
+  // Build a sample workbook in the real R12-6 layout and download it.
+  function downloadMockSheet() {
+    const aoa = [
+      ["Active Status", "ID", "Assembly Location Information", "", "", "", "", "", ""],
+      [],
+      [],
+      ["", "", "County", "Route", "Section", "Direction", "Mile Point", "Side of Road", "Lat, Long"],
+      ["Active", "AW1052508121223", "Scott", "US-0025", "", "Decreasing", 20.656, "Right", "38.433738,-84.5661614"],
+      ["Active", "AW1052508121227", "Scott", "KY-0620", "", "Increasing", 16.537, "Right", " 38.3322507,-84.51439005"],
+      ["Active", "AW1052508121228", "Scott", "US-0025", "", "Increasing", 14.971, "Right", "38.3591820,-84.5639286"],
+      ["Inactive", "AW1052508121229", "Scott", "US-0025", "", "Increasing", 12.0, "Right", "38.3000000,-84.5600000"],
+      ["Active", "AW1202510140833", "Woodford", "US-0062", "", "Decreasing", 5.293, "Right", "38.043665,-84.758290"],
+      ["Active", "AW1202510140833", "Woodford", "US-0062", "", "Decreasing", 5.293, "Right", "38.043665,-84.758290"],
+      ["Active", "AW2604171416", "", "", "", "", "", "", ""],
+      ["Active", "AW2604171416A01", "Fayette", "US-0027", "", "Increasing", 1.2, "Right", "38.100000,-84.500000"],
+      ["Active", "AW2604171416B01", "Fayette", "US-0027", "", "Decreasing", 1.3, "Right", "38.200000,-84.600000"],
+      ["Active", "AW260414155A02", "Madison", "KY-2877", "", "Increasing", 0.75, "Right", "37.6406962,-84.3159329"],
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Master List R12-6");
+    XLSX.writeFile(wb, "mock-signs-R12-6.xlsx");
+  }
+
+  async function clearAllData() {
+    if (!confirm("Delete ALL signs, photos, and recipients from the database and this device? This cannot be undone.")) return;
+    setStatus("Clearing all data…", null, 0);
+    try {
+      let paths = [];
+      try {
+        paths = (await SB.select("captures", "select=storage_path")).map((r) => r.storage_path).filter(Boolean);
+      } catch {}
+      if (paths.length) { try { await SB.deletePhotos(paths); } catch {} }
+      await SB.remove("captures", "id=not.is.null");
+      await SB.remove("signs", "id=not.is.null");
+      await SB.remove("recipients", "email=not.is.null");
+      await DB.clearCaptures();
+      App.localCaptures = [];
+      App.photoCounts = {};
+      App.recipients = [];
+      await loadSigns();
+      setStatus("All data cleared.", "ok");
+      render();
+    } catch (e) {
+      setStatus(`Clear failed: ${e.message}`, "warn", 9000);
+    }
   }
 
   function renderParsedPreview(p) {
