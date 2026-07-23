@@ -16,10 +16,10 @@
     localCaptures: [],
     remoteCaptures: [],
     recipients: [],
+    settings: {}, // key/value app settings (e.g. email webhook)
+    isMobile: false,
     parsed: null, // staged Excel import { type, rows, sheetNames, sheet }
   };
-
-  let previewUrls = [];
 
   // ---- helpers ---------------------------------------------------------------
   const el = (id) => document.getElementById(id);
@@ -56,14 +56,20 @@
     return m ? m[1] : "jpg";
   };
 
-  function clearPreviews() {
-    previewUrls.forEach((u) => URL.revokeObjectURL(u));
-    previewUrls = [];
-  }
+  // Object URL for a blob. Each <img data-revoke> frees its own URL on load,
+  // so we never revoke a URL an on-screen image is still using (that was the
+  // "image shows its alt text" bug).
   function preview(blob) {
-    const u = URL.createObjectURL(blob);
-    previewUrls.push(u);
-    return u;
+    return URL.createObjectURL(blob);
+  }
+  function wireThumbs(root) {
+    (root || document).querySelectorAll("img[data-revoke]").forEach((img) => {
+      if (img.dataset.wired) return;
+      img.dataset.wired = "1";
+      const free = () => URL.revokeObjectURL(img.src);
+      img.addEventListener("load", free);
+      img.addEventListener("error", free);
+    });
   }
   let statusTimer = null;
   // Transient toast. Auto-hides after `ms` (pass 0 to keep it until replaced).
@@ -101,6 +107,15 @@
       App.recipients = rows.map((r) => r.email);
     } catch {
       App.recipients = [];
+    }
+  }
+
+  async function loadSettings() {
+    try {
+      const rows = await SB.select("settings", "select=key,value");
+      App.settings = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+    } catch {
+      App.settings = {};
     }
   }
 
@@ -214,7 +229,6 @@
 
   // ---- rendering: signs list -------------------------------------------------
   function renderSigns() {
-    clearPreviews();
     const q = App.search.trim().toLowerCase();
     let list = App.signs.filter((s) => (s.active_status || "Active") !== "Inactive");
     if (q)
@@ -274,7 +288,6 @@
 
   // ---- rendering: capture ----------------------------------------------------
   function renderCapture() {
-    clearPreviews();
     const sign = App.signs.find((s) => s.id === App.currentSignId);
     if (!sign) { App.screen = "signs"; return render(); }
     const today = todayStr();
@@ -289,7 +302,7 @@
       const r = slotRec(n);
       if (r)
         return `<div class="slot filled">
-            <img src="${preview(r.blob)}" alt="Photo ${n}" />
+            <img src="${preview(r.blob)}" alt="Photo ${n}" data-revoke />
             <div class="slot-bar">${statusChip(r)}
               <label class="btn small block">Retake<input type="file" accept="image/*" capture="environment" data-slot="${n}" hidden /></label>
               <button class="btn small danger block" data-remove="${n}">Remove</button>
@@ -321,6 +334,7 @@
       <div class="confirm-note">Make sure the ID above matches the sign in front of you.</div>
       <div class="slots">${slotHtml(1)}${slotHtml(2)}</div>
       <button id="doneBtn" class="btn primary block">Done, back to list</button>
+      <div id="onFile" class="on-file"></div>
       <button id="editToggle" class="btn link">${editing ? "Cancel editing" : "Edit sign details"}</button>
       ${editing ? editForm(sign) : ""}`;
 
@@ -335,11 +349,61 @@
     el("view").querySelectorAll("[data-remove]").forEach((b) =>
       b.addEventListener("click", () => removePhoto(sign.id, Number(b.dataset.remove)))
     );
+    wireThumbs(el("view"));
+    loadOnFile(sign.id);
     el("editToggle").addEventListener("click", () => { editing = !editing; render(); });
     if (editing) wireEditForm(sign);
   }
 
   let editing = false;
+
+  // Show photos already in the database for this sign (works on any device,
+  // e.g. reviewing on the computer what was shot in the field).
+  async function loadOnFile(signId) {
+    const box = el("onFile");
+    if (!box) return;
+    let rows = [];
+    try {
+      rows = await SB.select(
+        "captures",
+        `select=storage_path,batch_date,slot,captured_at&sign_id=eq.${encodeURIComponent(signId)}&order=batch_date.desc,slot.asc`
+      );
+    } catch { return; }
+    if (App.currentSignId !== signId || App.screen !== "capture") return; // navigated away
+    if (!rows.length) return;
+
+    // Group by date, most recent first.
+    const byDate = {};
+    for (const r of rows) (byDate[r.batch_date] = byDate[r.batch_date] || []).push(r);
+    const dates = Object.keys(byDate).sort().reverse();
+
+    box.innerHTML =
+      `<h3 class="on-file-h">Photos on file</h3>` +
+      dates
+        .map(
+          (d) =>
+            `<div class="on-file-day"><div class="on-file-date">${esc(d)}</div>
+               <div class="on-file-thumbs">${byDate[d]
+                 .map((r) => `<a class="of-thumb" data-path="${esc(r.storage_path)}" title="${esc(r.storage_path)}"><span>loading…</span></a>`)
+                 .join("")}</div></div>`
+        )
+        .join("");
+
+    // Fetch each thumbnail via the login token and swap it in.
+    box.querySelectorAll(".of-thumb").forEach(async (a) => {
+      try {
+        const blob = await SB.downloadPhoto(a.dataset.path);
+        if (App.currentSignId !== signId || App.screen !== "capture") return;
+        const url = preview(blob); // kept alive: the anchor opens the full image
+        a.href = url;
+        a.target = "_blank";
+        a.rel = "noopener";
+        a.innerHTML = `<img src="${url}" alt="" />`;
+      } catch {
+        a.innerHTML = `<span class="of-fail">?</span>`;
+      }
+    });
+  }
 
   function editForm(sign) {
     const f = (label, name, val, type) =>
@@ -415,7 +479,6 @@
   }
 
   async function renderReview() {
-    clearPreviews();
     el("view").innerHTML = `<p class="hint">Loading today's batch…</p>`;
     let remote = [];
     try {
@@ -428,6 +491,7 @@
     const files = buildExportList(remote);
     const pending = App.localCaptures.filter((c) => c.status !== "synced").length;
     const fsa = typeof window.showDirectoryPicker === "function";
+    const emailReady = !!(App.settings && App.settings.email_webhook_url);
 
     // Fetch thumbnails (small day batches — fine to pull).
     const thumbs = {};
@@ -440,7 +504,7 @@
     const rows = files
       .map(
         (f) => `<li class="file-row">
-          ${thumbs[f.storage_path] ? `<img src="${thumbs[f.storage_path]}" alt="" />` : `<div class="thumb-missing">?</div>`}
+          ${thumbs[f.storage_path] ? `<img src="${thumbs[f.storage_path]}" alt="" data-revoke />` : `<div class="thumb-missing">?</div>`}
           <div class="file-meta"><div class="file-name">${esc(f.filename)}</div>
             <div class="file-sub">${new Date(f.captured_at).toLocaleString()}</div></div>
         </li>`
@@ -464,17 +528,46 @@
         <h3>Notify the engineer</h3>
         <input id="emailInput" class="search" list="recips" type="email" placeholder="engineer@example.com" />
         <datalist id="recips">${datalist}</datalist>
-        <button id="composeBtn" class="btn secondary block">Compose email with file list</button>
+        ${emailReady
+          ? `<button id="sendBtn" class="btn primary block">Send email</button>
+             <button id="composeBtn" class="btn secondary block">Compose in mail app instead</button>`
+          : `<button id="composeBtn" class="btn secondary block">Compose email with file list</button>
+             <p class="hint">Tip: set up automatic sending under Setup to send without opening your mail app.</p>`}
       </div>
-      <button id="clearLocal" class="btn danger block">Clear this phone's local copies</button>` : ""}`;
+      ${App.localCaptures.length
+        ? `<button id="clearLocal" class="btn danger block">Clear photos saved on this device (${App.localCaptures.length})</button>`
+        : ""}` : ""}`;
 
+    wireThumbs(el("view"));
     if (pending) el("syncNow").addEventListener("click", syncAllPending);
     if (!files.length) return;
     if (fsa) el("exportFolder").addEventListener("click", () => exportToFolder(files));
     el("downloadAll").addEventListener("click", () => downloadAll(files));
     el("copyNames").addEventListener("click", () => copyNames(files));
+    if (emailReady) el("sendBtn").addEventListener("click", () => sendEmail(files));
     el("composeBtn").addEventListener("click", () => composeEmail(files));
-    el("clearLocal").addEventListener("click", clearLocalCopies);
+    if (App.localCaptures.length) el("clearLocal").addEventListener("click", clearLocalCopies);
+  }
+
+  async function sendEmail(files) {
+    const to = (el("emailInput").value || "").trim();
+    if (!to) return setStatus("Enter an email address first.", "warn");
+    const btn = el("sendBtn");
+    btn.disabled = true;
+    btn.textContent = "Sending…";
+    const subject = `Bridge sign photos, ${todayStr()}`;
+    const body =
+      "The following sign inspection photos have been added:\n\n" +
+      files.map((f) => f.filename).join("\n") + "\n";
+    try {
+      try { await SB.upsert("recipients", { email: to }, "email"); await loadRecipients(); } catch {}
+      await SB.invoke("notify", { to, subject, body });
+      setStatus(`Email sent to ${to}.`, "ok");
+    } catch (e) {
+      setStatus(`Send failed: ${e.message}. You can use Compose instead.`, "warn", 9000);
+      btn.disabled = false;
+      btn.textContent = "Send email";
+    }
   }
 
   async function fetchBlob(path) {
@@ -541,9 +634,13 @@
   }
 
   // ---- rendering: setup / Excel import --------------------------------------
+  let pendingToken = "";
+  const randToken = () => Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+
   function renderSetup() {
-    clearPreviews();
     const p = App.parsed;
+    const emailReady = !!(App.settings && App.settings.email_webhook_url);
+    const tokenVal = App.settings.email_webhook_token || pendingToken || (pendingToken = randToken());
     el("view").innerHTML = `
       <h2 class="screen-title">Setup: import signs</h2>
       <p class="hint">Load the Excel sheet on the computer. Existing IDs are updated; new ones are added. Do this again whenever the sheet changes.</p>
@@ -567,6 +664,18 @@
         <p class="hint">${App.online ? `${App.signs.length} sign(s) loaded from the server.` : "Offline. Can't reach the server."}</p>
       </div>
       <div class="setup-card">
+        <h3>Email notifications</h3>
+        <p class="hint">${emailReady
+          ? "Automatic sending is set up. Review can send email directly."
+          : "Not set up yet. Until then, Review composes an email in your mail app. Steps: docs/EMAIL_SETUP.md."}</p>
+        <label class="field"><span>Apps Script Web App URL</span>
+          <input id="whUrl" type="url" placeholder="https://script.google.com/macros/s/…/exec" value="${esc(App.settings.email_webhook_url || "")}" /></label>
+        <label class="field"><span>Shared token (paste this same value into the script)</span>
+          <input id="whToken" type="text" value="${esc(tokenVal)}" /></label>
+        <button id="saveEmail" class="btn primary block">Save email settings</button>
+        <button id="testEmail" class="btn secondary block">Send a test email</button>
+      </div>
+      <div class="setup-card">
         <p class="hint">Signed in as <strong>${esc(SB.currentUser() || "")}</strong></p>
         <button id="logoutBtn" class="btn secondary block">Log out</button>
       </div>`;
@@ -578,6 +687,27 @@
     if (sheetSel) sheetSel.addEventListener("change", (e) => reparseSheet(e.target.value));
     const imp = el("importBtn");
     if (imp) imp.addEventListener("click", doImport);
+
+    async function saveEmailSettings() {
+      await SB.upsert("settings", [
+        { key: "email_webhook_url", value: el("whUrl").value.trim() },
+        { key: "email_webhook_token", value: el("whToken").value.trim() },
+      ], "key");
+      await loadSettings();
+    }
+    el("saveEmail").addEventListener("click", async () => {
+      try { await saveEmailSettings(); setStatus("Email settings saved.", "ok"); render(); }
+      catch (e) { setStatus(`Save failed: ${e.message}`, "warn"); }
+    });
+    el("testEmail").addEventListener("click", async () => {
+      const to = prompt("Send a test email to which address?");
+      if (!to) return;
+      try {
+        await saveEmailSettings();
+        await SB.invoke("notify", { to, subject: "Bridge Sign Helper test", body: "Test email from Bridge Sign Helper. If you got this, notifications work." });
+        setStatus(`Test email sent to ${to}.`, "ok");
+      } catch (e) { setStatus(`Test failed: ${e.message}`, "warn", 9000); }
+    });
     el("logoutBtn").addEventListener("click", doLogout);
   }
 
@@ -807,11 +937,22 @@
     await loadLocalCaptures();
     await loadSigns();
     loadRecipients();
+    await loadSettings();
     render();
     if (App.localCaptures.some((c) => c.status !== "synced")) syncAllPending();
   }
 
+  function detectDevice() {
+    const mobile =
+      (matchMedia("(pointer: coarse)").matches && matchMedia("(max-width: 900px)").matches) ||
+      /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+    App.isMobile = mobile;
+    document.body.classList.toggle("is-mobile", mobile);
+    document.body.classList.toggle("is-desktop", !mobile);
+  }
+
   async function init() {
+    detectDevice();
     el("navSetup").addEventListener("click", () => { App.screen = "setup"; render(); });
     el("navSigns").addEventListener("click", () => { App.screen = "signs"; render(); });
     el("navReview").addEventListener("click", () => { App.screen = "review"; render(); });

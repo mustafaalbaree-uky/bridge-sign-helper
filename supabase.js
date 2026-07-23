@@ -109,8 +109,20 @@ window.SB = (() => {
     return res.blob();
   }
 
+  // Invoke an Edge Function with the current session.
+  async function invoke(name, payload) {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/${name}`, {
+      method: "POST",
+      headers: await headers({ "Content-Type": "application/json" }),
+      body: JSON.stringify(payload || {}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Function ${name}: ${res.status}`);
+    return data;
+  }
+
   // True if we can produce a usable access token (refreshing if needed).
   const ensureSession = async () => !!(await token());
 
-  return { login, logout, refresh, isLoggedIn, ensureSession, currentUser, select, upsert, remove, uploadPhoto, downloadPhoto };
+  return { login, logout, refresh, isLoggedIn, ensureSession, currentUser, select, upsert, remove, uploadPhoto, downloadPhoto, invoke };
 })();
