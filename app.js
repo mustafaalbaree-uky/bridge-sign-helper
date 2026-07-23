@@ -486,9 +486,9 @@
         </label>
         <label class="btn secondary block">Choose Excel / CSV file…
           <input id="fileInput" type="file" accept=".xlsx,.xls,.csv" hidden /></label>
-        ${p && p.sheetNames && p.sheetNames.length > 1 ? `
+        ${workbookCache && workbookCache.SheetNames.length > 1 ? `
           <label class="field"><span>Sheet</span>
-            <select id="sheetSel">${p.sheetNames.map((n) => `<option ${n === p.sheet ? "selected" : ""}>${esc(n)}</option>`).join("")}</select>
+            <select id="sheetSel">${workbookCache.SheetNames.map((n) => `<option ${n === currentSheet ? "selected" : ""}>${esc(n)}</option>`).join("")}</select>
           </label>` : ""}
       </div>
       ${p ? renderParsedPreview(p) : ""}
@@ -525,6 +525,7 @@
   }
 
   let workbookCache = null;
+  let currentSheet = null;
 
   async function handleFile(file) {
     if (!file) return;
@@ -532,12 +533,10 @@
     try {
       const buf = await file.arrayBuffer();
       workbookCache = XLSX.read(buf, { type: "array" });
-      const sheetNames = workbookCache.SheetNames;
-      const sheet = pickBestSheet(workbookCache);
-      App.parsed = Object.assign(parseSheet(workbookCache, sheet), {
+      currentSheet = pickBestSheet(workbookCache);
+      App.parsed = Object.assign(parseSheet(workbookCache, currentSheet), {
         type: el("typeSel") ? el("typeSel").value : "advance",
-        sheetNames,
-        sheet,
+        sheet: currentSheet,
       });
       setStatus("");
       render();
@@ -548,10 +547,9 @@
 
   function reparseSheet(sheet) {
     if (!workbookCache) return;
-    const type = App.parsed ? App.parsed.type : "advance";
-    App.parsed = Object.assign(parseSheet(workbookCache, sheet), {
-      type, sheetNames: workbookCache.SheetNames, sheet,
-    });
+    currentSheet = sheet;
+    const type = App.parsed ? App.parsed.type : el("typeSel") ? el("typeSel").value : "advance";
+    App.parsed = Object.assign(parseSheet(workbookCache, sheet), { type, sheet });
     render();
   }
 
@@ -647,16 +645,24 @@
         const cur = await SB.select("signs", "select=id");
         existing = new Set(cur.map((r) => r.id));
       } catch {}
-      const payload = p.rows.map((r) => Object.assign({ type: p.type, updated_at: new Date().toISOString() }, r));
+      // Collapse duplicate IDs within the sheet (last occurrence wins) — Postgres
+      // upsert rejects the same key twice in one command.
+      const byId = new Map();
+      for (const r of p.rows) byId.set(r.id, r);
+      const deduped = [...byId.values()];
+      const dupes = p.rows.length - deduped.length;
+      const payload = deduped.map((r) => Object.assign({ type: p.type, updated_at: new Date().toISOString() }, r));
       // Chunk to keep requests small.
       for (let i = 0; i < payload.length; i += 200)
         await SB.upsert("signs", payload.slice(i, i + 200), "id");
-      const added = p.rows.filter((r) => !existing.has(r.id)).length;
-      const updated = p.rows.length - added;
-      App.parsed = null;
-      workbookCache = null;
+      const added = deduped.filter((r) => !existing.has(r.id)).length;
+      const updated = deduped.length - added;
+      App.parsed = null; // keep workbookCache so another sheet can be imported
       await loadSigns();
-      setStatus(`Imported ${p.rows.length} sign(s): ${added} new, ${updated} updated.`, "ok");
+      setStatus(
+        `Imported ${deduped.length} sign(s): ${added} new, ${updated} updated${dupes ? ` · ${dupes} duplicate ID(s) collapsed` : ""}.`,
+        "ok"
+      );
       render();
     } catch (e) {
       setStatus(`Import failed: ${e.message}`, "warn");
