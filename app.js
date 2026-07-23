@@ -726,8 +726,8 @@
         <p class="hint">For testing only.</p>
         <button id="dlMock" class="btn secondary block">Download mock Excel sheet</button>
         <p class="hint">A sample sheet in the real R12-6 layout (split header, a duplicate ID, an inactive row, and a base-ID grouping row) to test importing.</p>
-        <button id="clearAll" class="btn danger block">Clear all data</button>
-        <p class="hint">Deletes every sign, photo, and recipient from the database and this device. Email settings are kept.</p>
+        <button id="clearAll" class="btn danger block">Clear signs &amp; photos</button>
+        <p class="hint">Deletes all signs and photos from the database and this device. Kept: your login, the email-sending setup, and saved recipient emails.</p>
       </details>`;
 
     el("fileInput").addEventListener("change", (e) => handleFile(e.target.files[0]));
@@ -788,23 +788,23 @@
   }
 
   async function clearAllData() {
-    if (!confirm("Delete ALL signs, photos, and recipients from the database and this device? This cannot be undone.")) return;
-    setStatus("Clearing all data…", null, 0);
+    if (!confirm("Delete ALL signs and photos from the database and this device? This cannot be undone.\n\nYour login, email-sending setup, and saved recipient emails are kept.")) return;
+    setStatus("Clearing signs and photos…", null, 0);
     try {
       let paths = [];
       try {
         paths = (await SB.select("captures", "select=storage_path")).map((r) => r.storage_path).filter(Boolean);
       } catch {}
       if (paths.length) { try { await SB.deletePhotos(paths); } catch {} }
+      // Only signs and their photos. Left untouched: auth users (logins),
+      // settings (email webhook), and recipients (saved colleague emails).
       await SB.remove("captures", "id=not.is.null");
       await SB.remove("signs", "id=not.is.null");
-      await SB.remove("recipients", "email=not.is.null");
       await DB.clearCaptures();
       App.localCaptures = [];
       App.photoCounts = {};
-      App.recipients = [];
       await loadSigns();
-      setStatus("All data cleared.", "ok");
+      setStatus("Signs and photos cleared.", "ok");
       render();
     } catch (e) {
       setStatus(`Clear failed: ${e.message}`, "warn", 9000);
