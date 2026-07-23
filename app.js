@@ -152,6 +152,11 @@
     return !!s.email_webhook_url; // legacy default
   }
 
+  // The "Compose email" fallback button can be turned off in Developer settings.
+  function composeEnabled() {
+    return App.settings.compose_enabled !== "false"; // default on
+  }
+
   // ---- geolocation -----------------------------------------------------------
   function requestLocation() {
     const btn = el("locateBtn");
@@ -641,7 +646,7 @@
             ${fsa ? `<button id="actFolder" class="btn small primary">Save to folder</button>` : ""}
             <button id="actDownload" class="btn small secondary">Download</button>
             ${emailReady ? `<button id="actSend" class="btn small secondary">Send email</button>` : ""}
-            <button id="actCompose" class="btn small secondary">Compose email</button>
+            ${composeEnabled() ? `<button id="actCompose" class="btn small secondary">Compose email</button>` : ""}
           </div>
           <p class="hint">Tick individual photos or a whole day, then these buttons act on everything selected.</p>
         </div>
@@ -710,7 +715,7 @@
     if (fsa) el("actFolder").addEventListener("click", () => act(exportToFolder, "exported"));
     el("actDownload").addEventListener("click", () => act(downloadAll, "exported"));
     if (emailReady) el("actSend").addEventListener("click", (e) => act(sendEmail, "emailed", e.currentTarget));
-    el("actCompose").addEventListener("click", () => act(composeEmail, "emailed"));
+    if (composeEnabled()) el("actCompose").addEventListener("click", () => act(composeEmail, "emailed"));
 
     el("view").querySelectorAll(".recip-chip").forEach((c) =>
       c.addEventListener("click", () => { el("emailInput").value = c.dataset.email; el("emailInput").focus(); })
@@ -935,6 +940,9 @@
       <details class="setup-card collapsible">
         <summary>Developer settings</summary>
         <p class="hint">For testing only.</p>
+        <label class="check-row"><input type="checkbox" id="composeToggle" ${composeEnabled() ? "checked" : ""} />
+          <span>Show the “Compose email” button in Review</span></label>
+        <p class="hint">Turn off if automatic “Send email” is working and the mail-app fallback isn't needed.</p>
         <button id="dlMock" class="btn secondary block">Download mock Excel sheet</button>
         <p class="hint">A sample sheet in the real R12-6 layout (split header, a duplicate ID, an inactive row, and a base-ID grouping row) to test importing.</p>
         <button id="clearAll" class="btn danger block">Clear signs &amp; photos</button>
@@ -971,6 +979,13 @@
       } catch (e) { setStatus(`Test failed: ${e.message}`, "warn", 9000); }
     });
     el("logoutBtn").addEventListener("click", doLogout);
+    el("composeToggle").addEventListener("change", async (e) => {
+      try {
+        await SB.upsert("settings", { key: "compose_enabled", value: e.target.checked ? "true" : "false" }, "key");
+        await loadSettings();
+        setStatus(e.target.checked ? "Compose button shown." : "Compose button hidden.", "ok");
+      } catch (err) { setStatus(`Save failed: ${err.message}`, "warn"); }
+    });
     el("dlMock").addEventListener("click", downloadMockSheet);
     el("clearAll").addEventListener("click", clearAllData);
   }
