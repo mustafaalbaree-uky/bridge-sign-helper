@@ -553,12 +553,15 @@
           <div class="day-actions">
             ${fsa ? `<button class="btn small primary" data-act="folder" data-date="${date}">Save to folder</button>` : ""}
             <button class="btn small secondary" data-act="download" data-date="${date}">Download</button>
-            <button class="btn small secondary" data-act="email" data-date="${date}">Email this day</button>
+            ${emailReady ? `<button class="btn small secondary" data-act="send" data-date="${date}">Send email</button>` : ""}
+            <button class="btn small secondary" data-act="compose" data-date="${date}">Compose email</button>
           </div>
         </section>`;
     };
 
-    const datalist = App.recipients.map((e) => `<option value="${esc(e)}">`).join("");
+    const chips = App.recipients
+      .map((e) => `<button type="button" class="recip-chip" data-email="${esc(e)}">${esc(e)}</button>`)
+      .join("");
 
     el("view").innerHTML = `
       <h2 class="screen-title">Review &amp; export</h2>
@@ -566,13 +569,13 @@
       ${pending ? `<div class="banner warn">${pending} photo(s) on this device haven't uploaded. <button id="syncNow" class="btn small">Sync now</button></div>` : ""}
       ${files.length ? `
         <div class="notify">
-          <label class="fieldlabel" for="emailInput">Email recipient (used by “Email this day”)</label>
-          <input id="emailInput" class="search" type="email" list="recips"
+          <label class="fieldlabel" for="emailInput">Email recipient</label>
+          <input id="emailInput" class="search" type="email"
             name="bsh-notify-recipient" autocomplete="off" autocapitalize="off"
             autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true"
             data-form-type="other" placeholder="engineer@example.com" />
-          <datalist id="recips">${datalist}</datalist>
-          <p class="hint">${emailReady ? "Emailing sends automatically." : "Emailing opens your mail app. Set up automatic sending under Setup."}</p>
+          ${chips ? `<div class="recip-chips"><span class="recip-label">Saved:</span>${chips}</div>` : ""}
+          <p class="hint">${emailReady ? "“Send email” sends automatically. “Compose email” opens your mail app instead." : "“Compose email” opens your mail app with the file list ready to send."}</p>
         </div>
         ${dates.map(dayBlock).join("")}
         ${App.localCaptures.length ? `<button id="clearLocal" class="btn danger block">Clear photos saved on this device (${App.localCaptures.length})</button>` : ""}
@@ -584,10 +587,15 @@
     el("view").querySelectorAll("[data-act]").forEach((b) =>
       b.addEventListener("click", () => {
         const df = byDate.get(b.dataset.date) || [];
-        if (b.dataset.act === "folder") exportToFolder(df);
-        else if (b.dataset.act === "download") downloadAll(df);
-        else if (b.dataset.act === "email") (emailReady ? sendEmail(df, b) : composeEmail(df));
+        const a = b.dataset.act;
+        if (a === "folder") exportToFolder(df);
+        else if (a === "download") downloadAll(df);
+        else if (a === "send") sendEmail(df, b);
+        else if (a === "compose") composeEmail(df);
       })
+    );
+    el("view").querySelectorAll(".recip-chip").forEach((c) =>
+      c.addEventListener("click", () => { el("emailInput").value = c.dataset.email; el("emailInput").focus(); })
     );
     if (App.localCaptures.length) el("clearLocal").addEventListener("click", clearLocalCopies);
   }

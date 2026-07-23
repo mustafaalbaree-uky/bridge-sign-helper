@@ -177,6 +177,10 @@ code { font-family: ui-monospace, Menlo, Consolas, monospace; background: var(--
 /* Notify */
 .notify { margin-bottom: 14px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; box-shadow: var(--shadow); }
 .notify .search { margin-bottom: 8px; }
+.recip-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 4px; }
+.recip-label { font-size: 0.8rem; color: var(--muted); }
+.recip-chip { border: 1px solid var(--line); background: var(--chip-bg); color: var(--ink); border-radius: 999px; padding: 4px 10px; font-size: 0.82rem; cursor: pointer; }
+.recip-chip:hover { border-color: var(--accent-strong); }
 
 /* Setup / import */
 .setup-card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; box-shadow: var(--shadow); margin-bottom: 12px; }
