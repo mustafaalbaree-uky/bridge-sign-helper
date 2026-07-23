@@ -845,7 +845,7 @@
       }
       if (map.lat != null && row[map.lat] != null) lat = parseFloat(row[map.lat]);
       if (map.lng != null && row[map.lng] != null) lng = parseFloat(row[map.lng]);
-      rows.push({
+      const rec = {
         id,
         active_status: map.active_status != null ? String(row[map.active_status] || "").trim() || "Active" : "Active",
         county: map.county != null ? String(row[map.county] || "").trim() : "",
@@ -856,7 +856,13 @@
         side_of_road: map.side_of_road != null ? String(row[map.side_of_road] || "").trim() : "",
         lat: Number.isFinite(lat) ? lat : null,
         lng: Number.isFinite(lng) ? lng : null,
-      });
+      };
+      // Skip grouping/header rows that carry an ID but no actual sign data
+      // (e.g. an assembly's base ID sitting above its A01/B01/... sub-signs).
+      const hasData = rec.county || rec.route || rec.section || rec.direction ||
+        rec.side_of_road || rec.mile_point != null || rec.lat != null || rec.lng != null;
+      if (!hasData) continue;
+      rows.push(rec);
     }
     return { rows };
   }
