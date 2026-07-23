@@ -17,6 +17,7 @@
     remoteCaptures: [],
     recipients: [],
     settings: {}, // key/value app settings (e.g. email webhook)
+    captures: [], // cached server captures (for counts + photos-on-file)
     photoCounts: {}, // signId -> number of photos on the server
     isMobile: false,
     parsed: null, // staged Excel import { type, rows, sheetNames, sheet }
@@ -102,13 +103,26 @@
     App.localCaptures = await DB.allCaptures();
   }
 
-  async function loadPhotoCounts() {
+  // Cache every capture once. Feeds both the signs-list counts and the
+  // "Photos on file" section (so both are instant, no per-click network wait).
+  // Returns true if the per-sign counts changed.
+  async function refreshCaptures() {
     try {
-      const rows = await SB.select("captures", "select=sign_id");
+      const rows = await SB.select(
+        "captures",
+        "select=sign_id,slot,batch_date,storage_path,captured_at&order=batch_date.desc,slot.asc"
+      );
+      // Guard against a transient empty result wiping the badges.
+      if (!rows.length && App.captures.length) return false;
+      App.captures = rows;
       const m = {};
       for (const r of rows) m[r.sign_id] = (m[r.sign_id] || 0) + 1;
+      const changed = JSON.stringify(m) !== JSON.stringify(App.photoCounts);
       App.photoCounts = m;
-    } catch { /* keep whatever we had */ }
+      return changed;
+    } catch {
+      return false; // keep whatever we had
+    }
   }
 
   async function loadRecipients() {
@@ -193,6 +207,7 @@
       );
       rec.status = "synced";
       rec.error = null;
+      refreshCaptures(); // keep the server cache / counts current
     } catch (e) {
       rec.status = "error";
       rec.error = String(e.message || e);
@@ -215,6 +230,7 @@
     await DB.removeCapture(`${signId}__${slot}__${batchDate}`);
     try {
       await SB.remove("captures", `sign_id=eq.${signId}&slot=eq.${slot}&batch_date=eq.${batchDate}`);
+      await refreshCaptures();
     } catch { /* offline: server copy (if any) cleared on next flush review */ }
     await loadLocalCaptures();
     render();
@@ -243,7 +259,9 @@
     editing = false;
     App.screen = "signs";
     render();
-    loadPhotoCounts().then(() => { if (App.screen === "signs") render(); });
+    // Refresh in the background; only re-render if counts actually changed
+    // (avoids the badge flicker when nothing has changed).
+    refreshCaptures().then((changed) => { if (changed && App.screen === "signs") render(); });
   }
 
   // ---- rendering: signs list -------------------------------------------------
@@ -376,39 +394,32 @@
 
   let editing = false;
 
-  // Show photos already in the database for this sign (works on any device,
-  // e.g. reviewing on the computer what was shot in the field).
-  async function loadOnFile(signId) {
+  // Show photos already in the database for this sign. The frames and count
+  // render instantly from the cached capture list; the images themselves
+  // stream in afterward, so it's obvious right away that photos exist.
+  function loadOnFile(signId) {
     const box = el("onFile");
     if (!box) return;
-    let rows = [];
-    try {
-      rows = await SB.select(
-        "captures",
-        `select=storage_path,batch_date,slot,captured_at&sign_id=eq.${encodeURIComponent(signId)}&order=batch_date.desc,slot.asc`
-      );
-    } catch { return; }
-    if (App.currentSignId !== signId || App.screen !== "capture") return; // navigated away
-    if (!rows.length) return;
+    const rows = App.captures.filter((c) => c.sign_id === signId);
+    if (!rows.length) { box.innerHTML = ""; return; }
 
-    // Group by date, most recent first.
     const byDate = {};
     for (const r of rows) (byDate[r.batch_date] = byDate[r.batch_date] || []).push(r);
     const dates = Object.keys(byDate).sort().reverse();
 
     box.innerHTML =
-      `<h3 class="on-file-h">Photos on file</h3>` +
+      `<h3 class="on-file-h">Photos on file (${rows.length})</h3>` +
       dates
         .map(
           (d) =>
             `<div class="on-file-day"><div class="on-file-date">${esc(d)}</div>
                <div class="on-file-thumbs">${byDate[d]
-                 .map((r) => `<a class="of-thumb" data-path="${esc(r.storage_path)}" title="${esc(r.storage_path)}"><span>loading…</span></a>`)
+                 .map((r) => `<a class="of-thumb" data-path="${esc(r.storage_path)}"><span class="of-spin"></span></a>`)
                  .join("")}</div></div>`
         )
         .join("");
 
-    // Fetch each thumbnail via the login token and swap it in.
+    // Download each image via the login token and swap it in as it arrives.
     box.querySelectorAll(".of-thumb").forEach(async (a) => {
       try {
         const blob = await SB.downloadPhoto(a.dataset.path);
@@ -883,6 +894,7 @@
       await SB.remove("signs", "id=not.is.null");
       await DB.clearCaptures();
       App.localCaptures = [];
+      App.captures = [];
       App.photoCounts = {};
       await loadSigns();
       setStatus("Signs and photos cleared.", "ok");
@@ -1125,7 +1137,7 @@
     await loadSigns();
     loadRecipients();
     await loadSettings();
-    await loadPhotoCounts();
+    await refreshCaptures();
     render();
     if (App.localCaptures.some((c) => c.status !== "synced")) syncAllPending();
   }
