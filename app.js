@@ -556,21 +556,20 @@
   }
 
   function pickBestSheet(wb) {
-    for (const name of wb.SheetNames) {
-      const aoa = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, blankrows: false });
-      if (findHeaderRow(aoa) >= 0) return name;
-    }
+    for (const name of wb.SheetNames) if (parseSheet(wb, name).rows.length > 0) return name;
     return wb.SheetNames[0];
   }
 
   const norm = (v) => String(v == null ? "" : v).trim().toLowerCase();
 
-  function findHeaderRow(aoa) {
-    for (let i = 0; i < Math.min(aoa.length, 15); i++) {
-      const cells = (aoa[i] || []).map(norm);
-      const hasId = cells.some((c) => c === "id" || c.endsWith(" id"));
-      const hasGeo = cells.some((c) => /county|route|lat/.test(c));
-      if (hasId && hasGeo) return i;
+  // The location columns (County/Route/.../Lat, Long) share a header row, which
+  // may sit BELOW the row holding Active Status / ID. Find that row.
+  function findGeoRow(aoa) {
+    for (let i = 0; i < Math.min(aoa.length, 25); i++) {
+      const hits = (aoa[i] || [])
+        .map(norm)
+        .filter((c) => /county|route|mile|side of road|lat.*long|long.*lat/.test(c)).length;
+      if (hits >= 2) return i;
     }
     return -1;
   }
@@ -595,15 +594,20 @@
 
   function parseSheet(wb, sheetName) {
     const aoa = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, blankrows: false });
-    const hr = findHeaderRow(aoa);
-    if (hr < 0) return { rows: [] };
+    const geoRow = findGeoRow(aoa);
+    if (geoRow < 0) return { rows: [] };
+    // Header labels can be split across several rows (ID up top, the location
+    // columns lower). Scan every header row (0..geoRow) and map each column.
     const map = {};
-    (aoa[hr] || []).forEach((label, idx) => {
-      const f = classify(label);
-      if (f && map[f] === undefined) map[f] = idx;
-    });
+    for (let r = 0; r <= geoRow; r++) {
+      (aoa[r] || []).forEach((label, idx) => {
+        const f = classify(label);
+        if (f && map[f] === undefined) map[f] = idx;
+      });
+    }
+    if (map.id == null) return { rows: [] };
     const rows = [];
-    for (let i = hr + 1; i < aoa.length; i++) {
+    for (let i = geoRow + 1; i < aoa.length; i++) {
       const row = aoa[i] || [];
       const id = map.id != null ? String(row[map.id] == null ? "" : row[map.id]).trim() : "";
       if (!id) continue;
