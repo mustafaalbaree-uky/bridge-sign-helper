@@ -577,28 +577,42 @@
       return n === 0 ? "none" : n === ps.length ? "all" : "some";
     };
 
-    const fileRow = (f) => `<li class="file-row">
+    const isDone = (f) => f.exported_at && f.emailed_at;
+    const statusPills = (f) =>
+      (f.exported_at ? `<span class="chip ok">Saved</span>` : `<span class="chip">Not yet saved</span>`) +
+      (f.emailed_at ? `<span class="chip ok">Emailed</span>` : `<span class="chip">Not yet emailed</span>`);
+
+    // perPhoto=true shows each photo's own status + a Delete pill (only when done).
+    const fileRow = (f, perPhoto) => `<li class="file-row">
         <input type="checkbox" class="photo-cb" data-path="${esc(f.storage_path)}" data-date="${f.batch_date}" ${reviewSelected.has(f.storage_path) ? "checked" : ""} />
         ${thumbs[f.storage_path] ? `<img src="${thumbs[f.storage_path]}" alt="" data-revoke />` : `<div class="thumb-missing">?</div>`}
-        <div class="file-meta"><div class="file-name">${esc(f.filename)}</div>
-          <div class="file-sub">${new Date(f.captured_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</div></div>
+        <div class="file-meta">
+          <div class="file-name">${esc(f.filename)}</div>
+          <div class="file-sub">${new Date(f.captured_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</div>
+          ${perPhoto ? `<div class="pill-row">${statusPills(f)}${isDone(f) ? `<button class="chip del" data-del-photo="${esc(f.storage_path)}">Delete</button>` : ""}</div>` : ""}
+        </div>
       </li>`;
 
     const dayBlock = (date) => {
       const df = byDate.get(date);
       const label = date === today ? "Today" : prettyDate(date);
-      const saved = df.every((f) => f.exported_at);
-      const emailed = df.every((f) => f.emailed_at);
-      const flags =
-        (saved ? `<span class="chip ok">Saved</span>` : "") +
-        (emailed ? `<span class="chip ok">Emailed</span>` : "");
+      const nSaved = df.filter((f) => f.exported_at).length;
+      const nEmailed = df.filter((f) => f.emailed_at).length;
+      const dayDone = nSaved === df.length && nEmailed === df.length;
+      const dayFresh = nSaved === 0 && nEmailed === 0;
+      const perPhoto = !dayDone && !dayFresh; // mixed → per-photo detail
+      const flags = dayDone
+        ? `<span class="chip ok">Saved</span><span class="chip ok">Emailed</span><button class="chip del" data-del-day="${date}">Delete</button>`
+        : dayFresh
+          ? `<span class="chip">Not yet saved</span><span class="chip">Not yet emailed</span>`
+          : "";
       return `<section class="day-group">
           <div class="day-head">
             <label class="day-check"><input type="checkbox" class="day-cb" data-date="${date}" ${daySelState(date) === "all" ? "checked" : ""} />
               <span class="day-label">${label}</span></label>
             <span class="day-flags">${flags}</span>
             <span class="day-count">${df.length} photo${df.length > 1 ? "s" : ""}</span></div>
-          <ul class="file-list">${df.map(fileRow).join("")}</ul>
+          <ul class="file-list">${df.map((f) => fileRow(f, perPhoto)).join("")}</ul>
         </section>`;
     };
 
@@ -701,7 +715,64 @@
     el("view").querySelectorAll(".recip-chip").forEach((c) =>
       c.addEventListener("click", () => { el("emailInput").value = c.dataset.email; el("emailInput").focus(); })
     );
+    el("view").querySelectorAll("[data-del-day]").forEach((b) =>
+      b.addEventListener("click", () => showDeleteConfirm(byDate.get(b.dataset.delDay) || []))
+    );
+    el("view").querySelectorAll("[data-del-photo]").forEach((b) =>
+      b.addEventListener("click", () => {
+        const f = files.find((x) => x.storage_path === b.dataset.delPhoto);
+        if (f) showDeleteConfirm([f]);
+      })
+    );
     if (App.localCaptures.length) el("clearLocal").addEventListener("click", clearLocalCopies);
+  }
+
+  // Confirmation dialog that lists exactly what will be deleted, with status.
+  function showDeleteConfirm(files) {
+    if (!files.length) return;
+    const rows = files
+      .map(
+        (f) => `<li>
+          <span class="mono">${esc(f.filename)}</span>
+          ${f.exported_at ? `<span class="chip ok">Saved</span>` : `<span class="chip">Not yet saved</span>`}
+          ${f.emailed_at ? `<span class="chip ok">Emailed</span>` : `<span class="chip">Not yet emailed</span>`}
+        </li>`
+      )
+      .join("");
+    const incomplete = files.filter((f) => !(f.exported_at && f.emailed_at)).length;
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.innerHTML = `<div class="modal">
+        <h3>Delete ${files.length} photo${files.length > 1 ? "s" : ""} from the server?</h3>
+        <p class="hint">${incomplete
+          ? `<strong>Warning: ${incomplete} of these ${incomplete > 1 ? "are" : "is"} not fully saved and emailed.</strong> `
+          : "All of these are saved and emailed. "}This permanently removes them and cannot be undone.</p>
+        <ul class="del-list">${rows}</ul>
+        <div class="modal-actions">
+          <button class="btn secondary" data-mc="cancel">Cancel</button>
+          <button class="btn danger" data-mc="ok">Delete ${files.length}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const close = () => overlay.remove();
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+    overlay.querySelector('[data-mc="cancel"]').addEventListener("click", close);
+    overlay.querySelector('[data-mc="ok"]').addEventListener("click", () => { close(); deleteFromServer(files); });
+  }
+
+  async function deleteFromServer(files) {
+    const paths = files.map((f) => f.storage_path);
+    setStatus(`Deleting ${paths.length} photo(s)…`, null, 0);
+    try {
+      try { await SB.deletePhotos(paths); } catch { /* storage object may already be gone */ }
+      const list = paths.map((p) => encodeURIComponent(`"${p}"`)).join(",");
+      await SB.remove("captures", `storage_path=in.(${list})`);
+      await refreshCaptures();
+      setStatus(`Deleted ${paths.length} photo(s).`, "ok");
+      renderReview();
+    } catch (e) {
+      setStatus(`Delete failed: ${e.message}`, "warn", 9000);
+    }
   }
 
   // Mark the given photos (by storage path) as exported or emailed.

@@ -173,6 +173,19 @@ code { font-family: ui-monospace, Menlo, Consolas, monospace; background: var(--
 .chip { display: inline-block; font-size: 0.72rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--chip-bg); color: var(--muted); }
 .chip.ok { background: var(--ok-bg); color: var(--ok); }
 .chip.err { background: var(--danger-bg); color: var(--danger); }
+.chip.del { background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger); cursor: pointer; font-weight: 700; }
+.pill-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 5px; }
+
+/* Confirmation modal */
+.modal-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 16px; }
+.modal { background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 14px; padding: 18px; max-width: 460px; width: 100%; max-height: 80vh; overflow: auto; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45); }
+.modal h3 { margin: 0 0 6px; font-size: 1.1rem; }
+.del-list { list-style: none; margin: 10px 0; padding: 0; }
+.del-list li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 0.85rem; }
+.del-list li:last-child { border-bottom: 0; }
+.del-list .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-weight: 700; word-break: break-all; }
+.modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 12px; }
+.modal-actions .btn { flex: 0 0 auto; }
 
 /* Review: day groups */
 .day-group { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 12px; margin-bottom: 12px; }
