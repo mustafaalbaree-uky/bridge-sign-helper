@@ -55,11 +55,9 @@ html, body {
   -webkit-text-size-adjust: 100%;
 }
 
-/* Header */
+/* Header + status stick together at the top */
+.topbar { position: sticky; top: 0; z-index: 10; }
 .app-header {
-  position: sticky;
-  top: 0;
-  z-index: 10;
   background: var(--header-bg);
   color: var(--header-ink);
   padding: calc(env(safe-area-inset-top) + 10px) 14px 0;
