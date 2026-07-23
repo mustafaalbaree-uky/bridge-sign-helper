@@ -1,13 +1,16 @@
 // Service worker: makes the app installable and usable offline in the field.
 // Strategy: network-first for same-origin GETs (so updates show when online),
 // falling back to cache when offline.
-const CACHE = "bsh-v1";
+const CACHE = "bsh-v2";
 const SHELL = [
   "./",
   "index.html",
   "styles.css",
   "app.js",
   "db.js",
+  "config.js",
+  "supabase.js",
+  "vendor/xlsx.full.min.js",
   "data/signs.js",
   "manifest.webmanifest",
   "icon.svg",

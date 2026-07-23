@@ -14,14 +14,18 @@
   <header class="app-header">
     <div class="brand">Bridge Sign Helper</div>
     <nav class="tabs">
+      <button id="navSetup" class="tab">Setup</button>
       <button id="navSigns" class="tab active">Signs</button>
-      <button id="navReview" class="tab">Review <span id="reviewCount" class="count" hidden></span></button>
+      <button id="navReview" class="tab">Review <span id="syncDot" class="count" hidden></span></button>
     </nav>
   </header>
 
   <div id="statusBar" class="status" hidden></div>
   <main id="view" class="view"></main>
 
+  <script src="config.js"></script>
+  <script src="vendor/xlsx.full.min.js"></script>
+  <script src="supabase.js"></script>
   <script src="data/signs.js"></script>
   <script src="db.js"></script>
   <script src="app.js"></script>

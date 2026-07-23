@@ -1,14 +1,15 @@
-// Tiny IndexedDB wrapper for on-device photo captures.
-// One record per sign per photo slot. Key = `${signId}__${slot}` so a retake
-// replaces the same slot and a sign never exceeds two photos.
+// On-device storage (IndexedDB). Two stores:
+//   captures — offline-first photo queue; blobs live here until a flush clears them.
+//   signs    — local cache of the sign list so the field app works without signal.
 //
-// Record shape:
-//   { key, signId, slot (1|2), blob, capturedAt (ISO string),
-//     captureLat, captureLng }
+// Capture record:
+//   { key, signId, slot (1|2), batchDate 'YYYY-MM-DD', blob, capturedAt (ISO),
+//     captureLat, captureLng, storagePath, status 'pending'|'synced'|'error', error }
 window.DB = (() => {
   const DB_NAME = "bridge-sign-helper";
-  const DB_VERSION = 1;
-  const STORE = "captures";
+  const DB_VERSION = 2;
+  const CAPS = "captures";
+  const SIGNS = "signs";
   let dbp = null;
 
   function open() {
@@ -17,9 +18,8 @@ window.DB = (() => {
       const req = indexedDB.open(DB_NAME, DB_VERSION);
       req.onupgradeneeded = () => {
         const db = req.result;
-        if (!db.objectStoreNames.contains(STORE)) {
-          db.createObjectStore(STORE, { keyPath: "key" });
-        }
+        if (!db.objectStoreNames.contains(CAPS)) db.createObjectStore(CAPS, { keyPath: "key" });
+        if (!db.objectStoreNames.contains(SIGNS)) db.createObjectStore(SIGNS, { keyPath: "id" });
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
@@ -27,14 +27,19 @@ window.DB = (() => {
     return dbp;
   }
 
-  function tx(mode, fn) {
+  const reqP = (req) =>
+    new Promise((resolve, reject) => {
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+
+  function tx(store, mode, fn) {
     return open().then(
       (db) =>
         new Promise((resolve, reject) => {
-          const t = db.transaction(STORE, mode);
-          const store = t.objectStore(STORE);
+          const t = db.transaction(store, mode);
           let result;
-          Promise.resolve(fn(store))
+          Promise.resolve(fn(t.objectStore(store)))
             .then((r) => (result = r))
             .catch(reject);
           t.oncomplete = () => resolve(result);
@@ -44,24 +49,18 @@ window.DB = (() => {
     );
   }
 
-  const reqToPromise = (req) =>
-    new Promise((resolve, reject) => {
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
-    });
-
   return {
-    put(record) {
-      return tx("readwrite", (s) => reqToPromise(s.put(record)));
-    },
-    all() {
-      return tx("readonly", (s) => reqToPromise(s.getAll()));
-    },
-    remove(key) {
-      return tx("readwrite", (s) => reqToPromise(s.delete(key)));
-    },
-    clear() {
-      return tx("readwrite", (s) => reqToPromise(s.clear()));
-    },
+    // captures
+    putCapture: (rec) => tx(CAPS, "readwrite", (s) => reqP(s.put(rec))),
+    allCaptures: () => tx(CAPS, "readonly", (s) => reqP(s.getAll())),
+    removeCapture: (key) => tx(CAPS, "readwrite", (s) => reqP(s.delete(key))),
+    clearCaptures: () => tx(CAPS, "readwrite", (s) => reqP(s.clear())),
+    // signs cache
+    putSigns: (rows) =>
+      tx(SIGNS, "readwrite", (s) => {
+        s.clear();
+        rows.forEach((r) => s.put(r));
+      }),
+    allSigns: () => tx(SIGNS, "readonly", (s) => reqP(s.getAll())),
   };
 })();

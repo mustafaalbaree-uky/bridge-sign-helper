@@ -99,16 +99,25 @@ new rows rather than duplicating.
 - **Email:** Supabase Edge Function (transactional email) is the default. A Google Apps
   Script sender remains a fallback option.
 
+## Backend (implemented)
+
+Supabase project `bridge-sign-helper` (org `mammer55-cloud's Org`), free tier.
+
+- Tables: `signs`, `captures` (unique on `sign_id, slot, batch_date`), `recipients`.
+- Storage bucket `sign-photos` (public read via object URL).
+- Row Level Security is **on**; the publishable/anon key may read+write (no login yet).
+- The front end talks to PostgREST + Storage over `fetch` (no SDK) — see `supabase.js`.
+
 ## Roadmap
 
-- **Phase 1 (this build) — client-side experiment.** Phone flow end to end with the
-  R12-6 screenshot as placeholder data: pick sign, GPS nearest-sort, capture up to two
-  photos, correct filenames, review, export to a folder / download. No backend. Proves
-  the core loop on Brian's phone.
-- **Phase 2 — Supabase.** Shared database + photo storage so phone captures show up on
-  the computer for the flush; email notification.
-- **Phase 3 — real data + polish.** Excel import (real R12-6 sheet arrives Thursday),
-  the bridge-sign dataset, offline upload queue, recipient memory, per-day handling.
+- **Phase 1 — client-side experiment.** ✅ Phone flow end to end with placeholder data.
+- **Phase 2 — full connected workflow.** ✅ Excel import → shared DB + photo storage →
+  offline-first capture with upload status → review/export → mailto notification with
+  remembered recipients.
+- **Phase 3 — real data + polish.** Real R12-6 import (Thursday) and the bridge-sign
+  dataset (`…N`/`…L`/`…R`); **authentication / access control** (top item, see below);
+  automated email send (Edge Function or Apps Script) instead of `mailto`; optional
+  "mark exported / purge server copies" after a flush.
 
 ## Open questions (for later)
 

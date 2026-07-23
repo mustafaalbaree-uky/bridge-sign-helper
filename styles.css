@@ -213,6 +213,37 @@ html, body {
 .export-actions { margin-top: 16px; }
 code { font-family: ui-monospace, Menlo, Consolas, monospace; background: #eef1f5; padding: 1px 5px; border-radius: 4px; }
 
+/* Status variants */
+.status.ok { background: #e6f4ea; color: #17632f; border-bottom-color: #b7dfc4; }
+.status.warn { background: #fdecea; color: #8a2b1e; border-bottom-color: #f2c9c2; }
+.banner.warn { background: #fdecea; border-color: #f2c9c2; color: #8a2b1e; display: flex; align-items: center; gap: 10px; justify-content: space-between; }
+
+/* Sync status chips */
+.chip { font-size: 0.72rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: #eef1f5; color: var(--muted); }
+.chip.ok { background: #e6f4ea; color: var(--green); }
+.chip.err { background: #fdecea; color: var(--red); }
+.count { background: #ffd23f; color: #4a3800; }
+
+/* Capture slot bar */
+.slot-bar { display: flex; align-items: center; gap: 6px; padding: 6px; width: 100%; background: #fff; flex-wrap: wrap; justify-content: center; }
+
+/* Setup / import */
+.setup-card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; box-shadow: var(--shadow); margin-bottom: 12px; }
+.setup-card h3 { margin: 0 0 8px; font-size: 1rem; }
+.field { display: block; margin-bottom: 12px; }
+.field > span { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 4px; }
+.field select { width: 100%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; font-size: 1rem; background: #fff; }
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+table.preview { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+table.preview th, table.preview td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+table.preview th { color: var(--muted); font-weight: 600; }
+
+/* Notify */
+.notify { margin-top: 16px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; box-shadow: var(--shadow); }
+.notify h3 { margin: 0 0 8px; font-size: 1rem; }
+.notify .search { width: 100%; margin-bottom: 8px; }
+.thumb-missing { width: 56px; height: 56px; border-radius: 8px; background: #eef1f5; color: var(--muted); display: flex; align-items: center; justify-content: center; font-weight: 700; }
+
 @media (max-width: 380px) {
   .detail-grid { grid-template-columns: 1fr; }
 }
