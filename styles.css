@@ -156,13 +156,10 @@ html, body {
 .detail-grid > div { font-size: 0.95rem; }
 .detail-grid span { display: block; color: var(--muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; }
 .confirm-note {
-  background: #fff4f2;
-  border: 1px solid #f2c9c2;
-  color: #8a2b1e;
-  border-radius: 8px;
-  padding: 8px 10px;
+  color: var(--muted);
   font-size: 0.85rem;
-  margin-bottom: 12px;
+  margin: 2px 0 12px;
+  padding-left: 2px;
 }
 
 /* Photo slots */
@@ -225,7 +222,15 @@ code { font-family: ui-monospace, Menlo, Consolas, monospace; background: #eef1f
 .count { background: #ffd23f; color: #4a3800; }
 
 /* Capture slot bar */
-.slot-bar { display: flex; align-items: center; gap: 6px; padding: 6px; width: 100%; background: #fff; flex-wrap: wrap; justify-content: center; }
+.slot-bar { display: flex; flex-direction: column; align-items: stretch; gap: 6px; padding: 8px; width: 100%; background: #fff; }
+.slot-bar .btn { margin-top: 0; width: 100%; }
+.slot-bar .chip { align-self: center; }
+
+/* Login */
+.login-card { max-width: 380px; margin: 32px auto; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; box-shadow: var(--shadow); }
+.login-card h2 { margin: 0 0 4px; }
+.login-card .field input { width: 100%; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; font-size: 1rem; }
+.edit-card .field input { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; font-size: 1rem; }
 
 /* Setup / import */
 .setup-card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; box-shadow: var(--shadow); margin-bottom: 12px; }

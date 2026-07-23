@@ -65,12 +65,16 @@
     previewUrls.push(u);
     return u;
   }
-  function setStatus(msg, kind) {
+  let statusTimer = null;
+  // Transient toast. Auto-hides after `ms` (pass 0 to keep it until replaced).
+  function setStatus(msg, kind, ms = 5000) {
     const s = el("statusBar");
     if (!s) return;
+    clearTimeout(statusTimer);
     s.textContent = msg || "";
     s.hidden = !msg;
     s.className = "status" + (kind ? " " + kind : "");
+    if (msg && ms) statusTimer = setTimeout(() => { s.hidden = true; s.textContent = ""; }, ms);
   }
 
   // ---- data loading ----------------------------------------------------------
@@ -178,7 +182,7 @@
     setStatus(`Uploading ${pending.length} photo(s)…`);
     for (const rec of pending) await syncCapture(rec);
     const stillBad = App.localCaptures.filter((c) => c.status !== "synced").length;
-    setStatus(stillBad ? `${stillBad} still not uploaded — check signal.` : "All photos uploaded.", stillBad ? "warn" : "ok");
+    setStatus(stillBad ? `${stillBad} still not uploaded. Try again when you have signal.` : "All photos uploaded.", stillBad ? "warn" : "ok");
   }
 
   async function removePhoto(signId, slot) {
@@ -241,7 +245,7 @@
 
     const conn = App.online
       ? ""
-      : `<div class="banner warn">Offline — showing the last synced sign list. Photos will upload when you're back on signal.</div>`;
+      : `<div class="banner warn">Offline. Showing the last synced sign list; photos upload when you're back on signal.</div>`;
     const note = App.position
       ? `<div class="hint">Nearest first · GPS ±${Math.round(App.position.accuracy)} m. <strong>Confirm the ID by eye.</strong></div>`
       : "";
@@ -278,8 +282,8 @@
 
     const statusChip = (r) =>
       r.status === "synced" ? `<span class="chip ok">Uploaded</span>`
-      : r.status === "error" ? `<span class="chip err">Not uploaded</span>`
-      : `<span class="chip">Saving…</span>`;
+      : r.status === "error" ? `<span class="chip err" title="${esc(r.error || "")}">Not uploaded</span>`
+      : `<span class="chip">Uploading…</span>`;
 
     const slotHtml = (n) => {
       const r = slotRec(n);
@@ -287,12 +291,18 @@
         return `<div class="slot filled">
             <img src="${preview(r.blob)}" alt="Photo ${n}" />
             <div class="slot-bar">${statusChip(r)}
-              <label class="btn small">Retake<input type="file" accept="image/*" capture="environment" data-slot="${n}" hidden /></label>
-              <button class="btn small danger" data-remove="${n}">✕</button>
+              <label class="btn small block">Retake<input type="file" accept="image/*" capture="environment" data-slot="${n}" hidden /></label>
+              <button class="btn small danger block" data-remove="${n}">Remove</button>
             </div></div>`;
       return `<label class="slot empty"><span class="slot-plus">＋</span><span>Photo ${n}</span>
           <input type="file" accept="image/*" capture="environment" data-slot="${n}" hidden /></label>`;
     };
+
+    const hasCoords = sign.lat != null && sign.lng != null;
+    const mapsBtn = hasCoords
+      ? `<a class="btn secondary block" target="_blank" rel="noopener"
+           href="https://www.google.com/maps/search/?api=1&query=${sign.lat},${sign.lng}">Open in Google Maps</a>`
+      : "";
 
     el("view").innerHTML = `
       <button id="backBtn" class="btn link">‹ All signs</button>
@@ -306,19 +316,79 @@
           <div><span>Side</span>${esc(sign.side_of_road)}</div>
           <div><span>Coordinates</span>${esc(sign.lat)}, ${esc(sign.lng)}</div>
         </div>
+        ${mapsBtn}
       </div>
-      <div class="confirm-note">Confirm this is the correct sign before shooting.</div>
+      <div class="confirm-note">Make sure the ID above matches the sign in front of you.</div>
       <div class="slots">${slotHtml(1)}${slotHtml(2)}</div>
-      <button id="doneBtn" class="btn primary block">Done — back to list</button>`;
+      <button id="doneBtn" class="btn primary block">Done, back to list</button>
+      <button id="editToggle" class="btn link">${editing ? "Cancel editing" : "Edit sign details"}</button>
+      ${editing ? editForm(sign) : ""}`;
 
-    el("backBtn").addEventListener("click", () => { App.screen = "signs"; render(); });
-    el("doneBtn").addEventListener("click", () => { App.screen = "signs"; render(); });
+    el("backBtn").addEventListener("click", () => { editing = false; App.screen = "signs"; render(); });
+    el("doneBtn").addEventListener("click", () => {
+      editing = false; App.screen = "signs"; render();
+      if (App.localCaptures.some((c) => c.status !== "synced")) syncAllPending();
+    });
     el("view").querySelectorAll('input[type="file"]').forEach((inp) =>
       inp.addEventListener("change", (e) => onPhoto(sign.id, Number(inp.dataset.slot), e.target.files[0]))
     );
     el("view").querySelectorAll("[data-remove]").forEach((b) =>
       b.addEventListener("click", () => removePhoto(sign.id, Number(b.dataset.remove)))
     );
+    el("editToggle").addEventListener("click", () => { editing = !editing; render(); });
+    if (editing) wireEditForm(sign);
+  }
+
+  let editing = false;
+
+  function editForm(sign) {
+    const f = (label, name, val, type) =>
+      `<label class="field"><span>${label}</span>
+         <input class="ef" data-name="${name}" type="${type || "text"}" value="${esc(val == null ? "" : val)}" /></label>`;
+    return `<div class="setup-card edit-card">
+        <div class="banner warn">Editing changes the app's copy only. The next Excel import can overwrite it. Make sure that's what you want.</div>
+        ${f("County", "county", sign.county)}
+        ${f("Route", "route", sign.route)}
+        ${f("Section", "section", sign.section)}
+        ${f("Direction", "direction", sign.direction)}
+        ${f("Mile point", "mile_point", sign.mile_point, "number")}
+        ${f("Side of road", "side_of_road", sign.side_of_road)}
+        ${f("Latitude", "lat", sign.lat, "number")}
+        ${f("Longitude", "lng", sign.lng, "number")}
+        <button id="saveEdit" class="btn primary block">Save changes</button>
+        <button id="deleteSign" class="btn danger block">Delete this sign</button>
+      </div>`;
+  }
+
+  function wireEditForm(sign) {
+    el("saveEdit").addEventListener("click", async () => {
+      const patch = { id: sign.id, updated_at: new Date().toISOString() };
+      el("view").querySelectorAll(".ef").forEach((inp) => {
+        const name = inp.dataset.name;
+        let v = inp.value.trim();
+        if (name === "mile_point" || name === "lat" || name === "lng") v = v === "" ? null : parseFloat(v);
+        patch[name] = v;
+      });
+      try {
+        await SB.upsert("signs", patch, "id");
+        editing = false;
+        await loadSigns();
+        setStatus("Sign updated.", "ok");
+        render();
+      } catch (e) { setStatus(`Update failed: ${e.message}`, "warn"); }
+    });
+    el("deleteSign").addEventListener("click", async () => {
+      if (!confirm(`Delete ${sign.id}? This removes it from the app (not from the Excel sheet).`)) return;
+      try {
+        await SB.remove("signs", `id=eq.${encodeURIComponent(sign.id)}`);
+        editing = false;
+        App.screen = "signs";
+        App.currentSignId = null;
+        await loadSigns();
+        setStatus("Sign deleted.", "ok");
+        render();
+      } catch (e) { setStatus(`Delete failed: ${e.message}`, "warn"); }
+    });
   }
 
   // ---- rendering: review / flush --------------------------------------------
@@ -454,7 +524,7 @@
     const to = (el("emailInput").value || "").trim();
     if (!to) return setStatus("Enter an email address first.", "warn");
     try { await SB.upsert("recipients", { email: to }, "email"); await loadRecipients(); } catch {}
-    const subject = `Bridge sign photos — ${todayStr()}`;
+    const subject = `Bridge sign photos, ${todayStr()}`;
     const body =
       "The following sign inspection photos have been added:\n\n" +
       files.map((f) => f.filename).join("\n") +
@@ -475,7 +545,7 @@
     clearPreviews();
     const p = App.parsed;
     el("view").innerHTML = `
-      <h2 class="screen-title">Setup — import signs</h2>
+      <h2 class="screen-title">Setup: import signs</h2>
       <p class="hint">Load the Excel sheet on the computer. Existing IDs are updated; new ones are added. Do this again whenever the sheet changes.</p>
       <div class="setup-card">
         <label class="field"><span>Sign type</span>
@@ -494,7 +564,11 @@
       ${p ? renderParsedPreview(p) : ""}
       <div class="setup-card">
         <h3>Current database</h3>
-        <p class="hint">${App.online ? `${App.signs.length} sign(s) loaded from the server.` : "Offline — can't reach the server."}</p>
+        <p class="hint">${App.online ? `${App.signs.length} sign(s) loaded from the server.` : "Offline. Can't reach the server."}</p>
+      </div>
+      <div class="setup-card">
+        <p class="hint">Signed in as <strong>${esc(SB.currentUser() || "")}</strong></p>
+        <button id="logoutBtn" class="btn secondary block">Log out</button>
       </div>`;
 
     el("fileInput").addEventListener("change", (e) => handleFile(e.target.files[0]));
@@ -504,6 +578,7 @@
     if (sheetSel) sheetSel.addEventListener("change", (e) => reparseSheet(e.target.value));
     const imp = el("importBtn");
     if (imp) imp.addEventListener("click", doImport);
+    el("logoutBtn").addEventListener("click", doLogout);
   }
 
   function renderParsedPreview(p) {
@@ -515,7 +590,7 @@
     const bad = p.rows.filter((r) => r.lat == null || r.lng == null).length;
     return `<div class="setup-card">
         <h3>${p.rows.length} sign(s) found</h3>
-        ${bad ? `<div class="banner warn">${bad} row(s) have no usable coordinates — they'll import but won't sort by distance.</div>` : ""}
+        ${bad ? `<div class="banner warn">${bad} row(s) have no usable coordinates; they'll import but won't sort by distance.</div>` : ""}
         <div class="table-scroll"><table class="preview">
           <thead><tr><th>ID</th><th>County</th><th>Route</th><th>Lat, Long</th></tr></thead>
           <tbody>${head}</tbody></table></div>
@@ -671,23 +746,83 @@
     }
   }
 
-  // ---- boot ------------------------------------------------------------------
-  async function init() {
-    el("navSetup").addEventListener("click", () => { App.screen = "setup"; render(); });
-    el("navSigns").addEventListener("click", () => { App.screen = "signs"; render(); });
-    el("navReview").addEventListener("click", () => { App.screen = "review"; render(); });
+  // ---- auth / boot -----------------------------------------------------------
+  const USERNAME_DOMAIN = "bridgesign.app";
+  const usernameToEmail = (u) => (u.includes("@") ? u : `${u}@${USERNAME_DOMAIN}`);
 
+  function showChrome(show) {
+    const tabs = document.querySelector(".tabs");
+    if (tabs) tabs.style.display = show ? "" : "none";
+  }
+
+  function renderLogin(prefillUser, err) {
+    showChrome(false);
+    setStatus("");
+    el("view").innerHTML = `
+      <div class="login-card">
+        <h2>Sign in</h2>
+        <p class="hint">Access is limited to authorized users.</p>
+        ${err ? `<div class="banner warn">${esc(err)}</div>` : ""}
+        <label class="field"><span>Username</span>
+          <input id="loginUser" type="text" autocomplete="username" value="${esc(prefillUser || "")}" /></label>
+        <label class="field"><span>Password</span>
+          <input id="loginPass" type="password" autocomplete="current-password" /></label>
+        <button id="loginBtn" class="btn primary block">Sign in</button>
+        <p class="hint">You'll stay signed in on this device until you log out.</p>
+      </div>`;
+    const submit = async () => {
+      const u = el("loginUser").value.trim();
+      const pw = el("loginPass").value;
+      if (!u || !pw) return;
+      const btn = el("loginBtn");
+      btn.disabled = true;
+      btn.textContent = "Signing in…";
+      try {
+        await SB.login(usernameToEmail(u), pw, u);
+        await startApp();
+      } catch (e) {
+        renderLogin(u, e.message || "Login failed");
+      }
+    };
+    el("loginBtn").addEventListener("click", submit);
+    el("loginPass").addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+    el("loginUser").focus();
+  }
+
+  function doLogout() {
+    SB.logout();
+    App.signs = [];
+    App.remoteCaptures = [];
+    App.recipients = [];
+    editing = false;
+    renderLogin();
+  }
+
+  async function startApp() {
+    // Confirm the stored session is still good; otherwise back to login.
+    if (!(await SB.ensureSession())) { doLogout(); return; }
+    showChrome(true);
+    App.screen = "signs";
     el("view").innerHTML = `<p class="hint">Loading…</p>`;
     await loadLocalCaptures();
     await loadSigns();
     loadRecipients();
     render();
-
-    // Retry any photos that didn't upload last session.
     if (App.localCaptures.some((c) => c.status !== "synced")) syncAllPending();
-
-    if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
   }
+
+  async function init() {
+    el("navSetup").addEventListener("click", () => { App.screen = "setup"; render(); });
+    el("navSigns").addEventListener("click", () => { App.screen = "signs"; render(); });
+    el("navReview").addEventListener("click", () => { App.screen = "review"; render(); });
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+
+    if (SB.isLoggedIn()) await startApp();
+    else renderLogin();
+  }
+
+  // expose logout for the Setup screen button
+  window.__bshLogout = doLogout;
 
   document.addEventListener("DOMContentLoaded", init);
 })();

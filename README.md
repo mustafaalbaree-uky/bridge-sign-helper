@@ -35,13 +35,13 @@ and access control (see Security below).
 public — it only grants what the database's Row Level Security allows. The secret
 service key is never in this repo.
 
-## Security (v1 tradeoff — read before wider rollout)
+## Security
 
-To keep the experiment friction-free there is **no login**: the publishable key lets
-anyone who has it read and write the sign/capture data and view photos by URL. The
-data is low-sensitivity (public-infrastructure signage), but before rolling this out
-beyond a trial, add authentication (a login or a shared passcode) and tighten the
-row-level policies. This is the top open item.
+Access requires a **login** (Supabase Auth). Row Level Security and the photo bucket
+are locked to authenticated users, so the publishable key alone grants nothing without
+a valid session. Sessions persist on the device until logout. User accounts are managed
+in the Supabase dashboard (Authentication). Usernames map to an internal
+`<username>@bridgesign.app` email for the auth server.
 
 ## Run it
 
