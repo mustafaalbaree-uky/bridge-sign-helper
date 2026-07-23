@@ -159,9 +159,10 @@ code { font-family: ui-monospace, Menlo, Consolas, monospace; background: var(--
 
 /* Review: day groups */
 .day-group { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 12px; margin-bottom: 12px; }
-.day-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
+.day-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .day-label { font-weight: 700; font-size: 1.05rem; }
-.day-count { color: var(--muted); font-size: 0.82rem; }
+.day-count { color: var(--muted); font-size: 0.82rem; white-space: nowrap; }
+.day-flags { display: inline-flex; gap: 6px; margin-left: auto; }
 .day-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .day-actions .btn { flex: 1; min-width: 120px; }
 .day-check { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }

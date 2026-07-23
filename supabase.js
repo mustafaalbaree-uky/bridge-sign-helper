@@ -93,6 +93,15 @@ window.SB = (() => {
     if (!res.ok) throw new Error(`delete ${table}: ${res.status} ${await res.text()}`);
   }
 
+  async function update(table, query, patch) {
+    const res = await fetch(REST + table + `?${query}`, {
+      method: "PATCH",
+      headers: await headers({ "Content-Type": "application/json", Prefer: "return=minimal" }),
+      body: JSON.stringify(patch),
+    });
+    if (!res.ok) throw new Error(`update ${table}: ${res.status} ${await res.text()}`);
+  }
+
   // ---- storage (private bucket; all access uses the login token) -----------
   async function uploadPhoto(path, blob) {
     const res = await fetch(OBJ + BUCKET + "/" + path, {
@@ -134,5 +143,5 @@ window.SB = (() => {
   // True if we can produce a usable access token (refreshing if needed).
   const ensureSession = async () => !!(await token());
 
-  return { login, logout, refresh, isLoggedIn, ensureSession, currentUser, select, upsert, remove, uploadPhoto, downloadPhoto, deletePhotos, invoke };
+  return { login, logout, refresh, isLoggedIn, ensureSession, currentUser, select, upsert, remove, update, uploadPhoto, downloadPhoto, deletePhotos, invoke };
 })();

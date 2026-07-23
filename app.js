@@ -493,6 +493,8 @@
           storage_path: c.storage_path,
           captured_at: c.captured_at,
           batch_date: batch,
+          exported_at: c.exported_at,
+          emailed_at: c.emailed_at,
         });
       });
     }
@@ -552,10 +554,16 @@
     const dayBlock = (date) => {
       const df = byDate.get(date);
       const label = date === today ? "Today" : prettyDate(date);
+      const saved = df.every((f) => f.exported_at);
+      const emailed = df.every((f) => f.emailed_at);
+      const flags =
+        (saved ? `<span class="chip ok">Saved</span>` : "") +
+        (emailed ? `<span class="chip ok">Emailed</span>` : "");
       return `<section class="day-group">
           <div class="day-head">
             <label class="day-check"><input type="checkbox" class="day-cb" data-date="${date}" ${reviewSelected.has(date) ? "checked" : ""} />
               <span class="day-label">${label}</span></label>
+            <span class="day-flags">${flags}</span>
             <span class="day-count">${df.length} photo${df.length > 1 ? "s" : ""}</span></div>
           <ul class="file-list">${df.map(fileRow).join("")}</ul>
         </section>`;
@@ -623,20 +631,33 @@
       updateSummary();
     });
 
-    const act = (fn, btn) => {
+    const act = async (fn, kind, btn) => {
       const f = selectedFiles();
       if (!f.length) return setStatus("Tick at least one day first.", "warn");
-      fn(f, btn);
+      const ok = await fn(f, btn);
+      if (ok !== false) {
+        await markDays([...new Set(f.map((x) => x.batch_date))], kind);
+        renderReview(); // refresh the Saved/Emailed badges
+      }
     };
-    if (fsa) el("actFolder").addEventListener("click", () => act(exportToFolder));
-    el("actDownload").addEventListener("click", () => act(downloadAll));
-    if (emailReady) el("actSend").addEventListener("click", (e) => act(sendEmail, e.currentTarget));
-    el("actCompose").addEventListener("click", () => act(composeEmail));
+    if (fsa) el("actFolder").addEventListener("click", () => act(exportToFolder, "exported"));
+    el("actDownload").addEventListener("click", () => act(downloadAll, "exported"));
+    if (emailReady) el("actSend").addEventListener("click", (e) => act(sendEmail, "emailed", e.currentTarget));
+    el("actCompose").addEventListener("click", () => act(composeEmail, "emailed"));
 
     el("view").querySelectorAll(".recip-chip").forEach((c) =>
       c.addEventListener("click", () => { el("emailInput").value = c.dataset.email; el("emailInput").focus(); })
     );
     if (App.localCaptures.length) el("clearLocal").addEventListener("click", clearLocalCopies);
+  }
+
+  // Mark all captures on the given days as exported or emailed.
+  async function markDays(days, kind) {
+    if (!days.length) return;
+    const col = kind === "exported" ? "exported_at" : "emailed_at";
+    try {
+      await SB.update("captures", `batch_date=in.(${days.join(",")})`, { [col]: new Date().toISOString() });
+    } catch { /* non-fatal: badge just won't update */ }
   }
 
   // Subject + body for a set of files that may span multiple days.
@@ -654,19 +675,22 @@
 
   async function sendEmail(files, btn) {
     const to = (el("emailInput").value || "").trim();
-    if (!to) return setStatus("Enter an email address first.", "warn");
+    if (!to) { setStatus("Enter an email address first.", "warn"); return false; }
     const label = btn ? btn.textContent : "";
     if (btn) { btn.disabled = true; btn.textContent = "Sending…"; }
     const { subject, body } = emailSubjectBody(files);
+    let ok = false;
     try {
       try { await SB.upsert("recipients", { email: to }, "email"); await loadRecipients(); } catch {}
       await SB.invoke("notify", { to, subject, body });
       setStatus(`Email sent to ${to}.`, "ok");
+      ok = true;
     } catch (e) {
       setStatus(`Send failed: ${e.message}. You can use Compose instead.`, "warn", 9000);
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = label || "Send email"; }
     }
+    return ok;
   }
 
   async function fetchBlob(path) {
@@ -686,9 +710,11 @@
         ok++;
       }
       setStatus(`Saved ${ok} photo(s) to the chosen folder.`, "ok");
+      return true;
     } catch (e) {
-      if (e && e.name === "AbortError") return;
+      if (e && e.name === "AbortError") return false;
       setStatus(`Could not save: ${e.message}`, "warn");
+      return false;
     }
   }
 
@@ -704,6 +730,8 @@
       } catch {}
       await new Promise((r) => setTimeout(r, 250));
     }
+    setStatus(`Downloaded ${files.length} photo(s).`, "ok");
+    return true;
   }
 
   async function copyNames(files) {
@@ -717,6 +745,7 @@
     if (to) { try { await SB.upsert("recipients", { email: to }, "email"); await loadRecipients(); } catch {} }
     const { subject, body } = emailSubjectBody(files);
     window.location.href = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    return true;
   }
 
   async function clearLocalCopies() {
