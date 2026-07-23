@@ -192,6 +192,11 @@ code { font-family: ui-monospace, Menlo, Consolas, monospace; background: var(--
 .setup-card h3 { margin: 0 0 8px; font-size: 1rem; }
 .collapsible summary { font-weight: 700; cursor: pointer; list-style: revert; }
 .collapsible[open] summary { margin-bottom: 10px; }
+.check-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; cursor: pointer; font-size: 0.9rem; }
+.check-row input { width: 18px; height: 18px; accent-color: var(--accent-strong); flex: none; }
+.sub { margin: 8px 0; }
+.sub summary { font-weight: 600; font-size: 0.85rem; color: var(--muted); cursor: pointer; }
+.sub[open] summary { margin-bottom: 8px; }
 .field { display: block; margin-bottom: 12px; }
 .field > span { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 4px; }
 .edit-card .field input { width: 100%; }

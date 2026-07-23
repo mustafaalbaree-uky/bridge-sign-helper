@@ -1,58 +1,67 @@
-# Automatic email setup (Gmail + Google Apps Script)
+# Automatic email setup
 
-This lets the **Review** screen send the notification email for real, instead of
-just opening your mail app. The email is sent by a Google Apps Script that runs as
-a Gmail account you own, so your Gmail password never leaves Google. The app talks
-to it through a small server function, so there are no browser security issues.
+The Review screen can send the notification email automatically. There are two
+ways; **Gmail with an app password is the recommended, durable option.**
 
-## How it flows
+The actual sending happens in the `notify` Supabase Edge Function, so no email
+credentials ever live in this repo or in the browser.
 
-```
-Review screen  ->  notify (Supabase function)  ->  your Apps Script  ->  Gmail sends
-```
+---
 
-## One-time setup (about 5 minutes)
+## Method A — Gmail app password (recommended)
 
-1. **Make/choose the sending Gmail.** A dedicated account is fine (e.g.
-   `bridgesignbot@gmail.com`). Sign in to it.
+Uses an existing Gmail account to send over SMTP. App passwords don't expire, so
+this keeps working long-term. Best to use an account Google already trusts.
 
-2. Go to <https://script.google.com> and click **New project**.
+1. **Turn on 2-Step Verification** for the Google account (required for app
+   passwords): Google Account → Security → 2-Step Verification.
+2. **Create an app password:** Google Account → Security → App passwords →
+   create one (name it e.g. "Bridge Sign Helper"). Copy the 16-character code.
+3. **Add two secrets in Supabase:** dashboard → your project → **Edge Functions
+   → Secrets** (add secret):
+   - `GMAIL_USER` = the full sending address (e.g. `you@gmail.com`)
+   - `GMAIL_APP_PASSWORD` = the 16-character app password (spaces are fine)
+4. In the app: **Setup → Email notifications**, tick **Enable automatic
+   sending**, **Save**, then **Send a test email** to confirm.
 
-3. Delete the sample code and paste this in, then **replace the token** with the
-   value shown in the app under **Setup → Email notifications → Shared token**:
+That's it — the function sends through Gmail whenever those secrets are present.
+
+---
+
+## Method B — Google Apps Script webhook (alternative)
+
+Sends via a script bound to a Google account. Note: brand-new Gmail accounts
+used only for automation can get flagged/suspended by Google.
+
+1. Sign in to the sending Gmail. Go to <https://script.google.com> → New project.
+2. Paste this, replacing the token with the one shown in **Setup → Email
+   notifications → (Apps Script) Shared token**:
 
    ```javascript
    function doPost(e) {
      var EXPECTED_TOKEN = "PASTE_TOKEN_FROM_SETUP_HERE";
      var data = JSON.parse(e.postData.contents);
      if (data.token !== EXPECTED_TOKEN) {
-       return ContentService
-         .createTextOutput(JSON.stringify({ error: "unauthorized" }))
+       return ContentService.createTextOutput(JSON.stringify({ error: "unauthorized" }))
          .setMimeType(ContentService.MimeType.JSON);
      }
      MailApp.sendEmail({ to: data.to, subject: data.subject, body: data.body });
-     return ContentService
-       .createTextOutput(JSON.stringify({ ok: true }))
+     return ContentService.createTextOutput(JSON.stringify({ ok: true }))
        .setMimeType(ContentService.MimeType.JSON);
    }
    ```
 
-4. **Deploy it:** click **Deploy → New deployment**. For type, pick **Web app**.
-   - **Execute as:** Me (the Gmail account)
-   - **Who has access:** Anyone
-   - Click **Deploy**, then **Authorize access** and allow the permissions.
+3. **Deploy → New deployment → Web app**, Execute as **Me**, Who has access
+   **Anyone** (this exact setting matters — "Anyone with Google Account" causes a
+   403). Deploy and authorize.
+4. Copy the `/exec` URL. In the app, open the "Alternative: Google Apps Script"
+   section, paste the URL + matching token, tick Enable, Save, and test.
 
-   "Anyone" is required so the server can reach it; the token is what actually
-   protects it.
+If both Gmail secrets and an Apps Script URL are set, Gmail wins.
 
-5. **Copy the Web app URL** (it ends in `/exec`).
+---
 
-6. Back in the app: **Setup → Email notifications**. Paste the **URL**, make sure
-   the **token** matches what you put in the script, click **Save email settings**,
-   then **Send a test email** to yourself to confirm it works.
+## Turning it off
 
-## Changing or revoking it
-
-- To rotate the token: change it in both the script (redeploy) and the app.
-- To turn it off: clear the URL in Setup and save; Review falls back to composing
-  in your mail app.
+Untick **Enable automatic sending** and Save. Review falls back to **Compose**
+(opens your mail app), which always works with no setup.

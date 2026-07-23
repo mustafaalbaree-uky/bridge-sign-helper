@@ -143,6 +143,15 @@
     }
   }
 
+  // Is automatic sending turned on? (The actual method — Gmail SMTP or Apps
+  // Script — lives in server-side secrets, invisible to the browser.)
+  function emailConfigured() {
+    const s = App.settings || {};
+    if (s.email_enabled === "true") return true;
+    if (s.email_enabled === "false") return false;
+    return !!s.email_webhook_url; // legacy default
+  }
+
   // ---- geolocation -----------------------------------------------------------
   function requestLocation() {
     const btn = el("locateBtn");
@@ -535,7 +544,7 @@
     const files = buildExportList(remote);
     const pending = App.localCaptures.filter((c) => c.status !== "synced").length;
     const fsa = typeof window.showDirectoryPicker === "function";
-    const emailReady = !!(App.settings && App.settings.email_webhook_url);
+    const emailReady = emailConfigured();
     const today = todayStr();
 
     const thumbs = {};
@@ -773,7 +782,7 @@
 
   function renderSetup() {
     const p = App.parsed;
-    const emailReady = !!(App.settings && App.settings.email_webhook_url);
+    const emailReady = emailConfigured();
     const tokenVal = App.settings.email_webhook_token || pendingToken || (pendingToken = randToken());
     el("view").innerHTML = `
       <h2 class="screen-title">Setup: import signs</h2>
@@ -801,15 +810,20 @@
         <p class="hint">Signed in as <strong>${esc(SB.currentUser() || "")}</strong></p>
         <button id="logoutBtn" class="btn secondary block">Log out</button>
       </div>
-      <details class="setup-card collapsible"${emailReady ? "" : ""}>
+      <details class="setup-card collapsible">
         <summary>Email notifications ${emailReady ? '<span class="chip ok">on</span>' : '<span class="chip">off</span>'}</summary>
-        <p class="hint">${emailReady
-          ? "Automatic sending is set up. Review can send email directly."
-          : "Not set up yet. Until then, Review composes an email in your mail app. Steps: docs/EMAIL_SETUP.md."}</p>
-        <label class="field"><span>Apps Script Web App URL</span>
-          <input id="whUrl" type="url" autocomplete="off" data-lpignore="true" placeholder="https://script.google.com/macros/s/…/exec" value="${esc(App.settings.email_webhook_url || "")}" /></label>
-        <label class="field"><span>Shared token (paste this same value into the script)</span>
-          <input id="whToken" type="text" autocomplete="off" data-lpignore="true" value="${esc(tokenVal)}" /></label>
+        <label class="check-row"><input type="checkbox" id="emailEnabled" ${emailConfigured() ? "checked" : ""} />
+          <span>Enable automatic sending (shows the “Send email” button in Review)</span></label>
+        <p class="hint"><strong>Gmail (recommended):</strong> in the Supabase dashboard → Edge Functions → Secrets, add
+          <code>GMAIL_USER</code> (the sending address) and <code>GMAIL_APP_PASSWORD</code> (a Google app password).
+          Then tick the box above, Save, and send a test. See docs/EMAIL_SETUP.md.</p>
+        <details class="sub">
+          <summary>Alternative: Google Apps Script webhook</summary>
+          <label class="field"><span>Apps Script Web App URL</span>
+            <input id="whUrl" type="url" autocomplete="off" data-lpignore="true" placeholder="https://script.google.com/macros/s/…/exec" value="${esc(App.settings.email_webhook_url || "")}" /></label>
+          <label class="field"><span>Shared token (paste this same value into the script)</span>
+            <input id="whToken" type="text" autocomplete="off" data-lpignore="true" value="${esc(tokenVal)}" /></label>
+        </details>
         <button id="saveEmail" class="btn primary block">Save email settings</button>
         <button id="testEmail" class="btn secondary block">Send a test email</button>
       </details>
@@ -832,6 +846,7 @@
 
     async function saveEmailSettings() {
       await SB.upsert("settings", [
+        { key: "email_enabled", value: el("emailEnabled").checked ? "true" : "false" },
         { key: "email_webhook_url", value: el("whUrl").value.trim() },
         { key: "email_webhook_token", value: el("whToken").value.trim() },
       ], "key");
