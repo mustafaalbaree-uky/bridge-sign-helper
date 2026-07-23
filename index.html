@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#1f6feb" />
+  <meta name="theme-color" content="#262a31" />
   <title>Bridge Sign Helper</title>
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" href="icon.svg" type="image/svg+xml" />
@@ -12,7 +12,10 @@
 </head>
 <body>
   <header class="app-header">
-    <div class="brand">Bridge Sign Helper</div>
+    <div class="header-top">
+      <div class="brand">Bridge Sign Helper</div>
+      <button id="themeToggle" class="theme-toggle" aria-label="Toggle dark mode" title="Toggle dark mode">🌙</button>
+    </div>
     <nav class="tabs">
       <button id="navSetup" class="tab">Setup</button>
       <button id="navSigns" class="tab active">Signs</button>

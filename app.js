@@ -456,6 +456,7 @@
   }
 
   // ---- rendering: review / flush --------------------------------------------
+  // Returns file objects tagged with their capture date, correctly named.
   function buildExportList(remoteRows) {
     const groups = {};
     for (const c of remoteRows) {
@@ -472,19 +473,27 @@
           filename: `${signId}-${yymmddFromDate(batch)}${two ? i + 1 : ""}.${extFromPath(c.storage_path)}`,
           storage_path: c.storage_path,
           captured_at: c.captured_at,
+          batch_date: batch,
         });
       });
     }
     return out.sort((a, b) => a.filename.localeCompare(b.filename));
   }
 
+  function prettyDate(dateStr) {
+    const [y, m, d] = dateStr.split("-").map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString(undefined, {
+      weekday: "short", month: "short", day: "numeric", year: "numeric",
+    });
+  }
+
   async function renderReview() {
-    el("view").innerHTML = `<p class="hint">Loading today's batch…</p>`;
+    el("view").innerHTML = `<p class="hint">Loading…</p>`;
     let remote = [];
     try {
       remote = await SB.select("captures", `select=*&order=batch_date.desc,sign_id.asc,slot.asc`);
     } catch {
-      el("view").innerHTML = `<div class="banner warn">Can't reach the server. Connect to load the batch for export.</div>`;
+      el("view").innerHTML = `<div class="banner warn">Can't reach the server. Connect to load photos for export.</div>`;
       return;
     }
     App.remoteCaptures = remote;
@@ -492,8 +501,8 @@
     const pending = App.localCaptures.filter((c) => c.status !== "synced").length;
     const fsa = typeof window.showDirectoryPicker === "function";
     const emailReady = !!(App.settings && App.settings.email_webhook_url);
+    const today = todayStr();
 
-    // Fetch thumbnails (small day batches — fine to pull).
     const thumbs = {};
     await Promise.all(
       files.map(async (f) => {
@@ -501,61 +510,75 @@
       })
     );
 
-    const rows = files
-      .map(
-        (f) => `<li class="file-row">
-          ${thumbs[f.storage_path] ? `<img src="${thumbs[f.storage_path]}" alt="" data-revoke />` : `<div class="thumb-missing">?</div>`}
-          <div class="file-meta"><div class="file-name">${esc(f.filename)}</div>
-            <div class="file-sub">${new Date(f.captured_at).toLocaleString()}</div></div>
-        </li>`
-      )
-      .join("");
+    // Group files by capture date, newest day first.
+    const byDate = new Map();
+    for (const f of files) {
+      if (!byDate.has(f.batch_date)) byDate.set(f.batch_date, []);
+      byDate.get(f.batch_date).push(f);
+    }
+    const dates = [...byDate.keys()].sort().reverse();
+
+    const fileRow = (f) => `<li class="file-row">
+        ${thumbs[f.storage_path] ? `<img src="${thumbs[f.storage_path]}" alt="" data-revoke />` : `<div class="thumb-missing">?</div>`}
+        <div class="file-meta"><div class="file-name">${esc(f.filename)}</div>
+          <div class="file-sub">${new Date(f.captured_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</div></div>
+      </li>`;
+
+    const dayBlock = (date) => {
+      const df = byDate.get(date);
+      const label = date === today ? "Today" : prettyDate(date);
+      return `<section class="day-group">
+          <div class="day-head"><span class="day-label">${label}</span>
+            <span class="day-count">${df.length} photo${df.length > 1 ? "s" : ""}</span></div>
+          <ul class="file-list">${df.map(fileRow).join("")}</ul>
+          <div class="day-actions">
+            ${fsa ? `<button class="btn small primary" data-act="folder" data-date="${date}">Save to folder</button>` : ""}
+            <button class="btn small secondary" data-act="download" data-date="${date}">Download</button>
+            <button class="btn small secondary" data-act="email" data-date="${date}">Email this day</button>
+          </div>
+        </section>`;
+    };
 
     const datalist = App.recipients.map((e) => `<option value="${esc(e)}">`).join("");
 
     el("view").innerHTML = `
       <h2 class="screen-title">Review &amp; export</h2>
+      <p class="hint">Every inspection photo on the server, newest day first. Photos stay here until you delete them; exporting or emailing does not remove them. Files are named <code>ID-YYMMDD</code>.</p>
       ${pending ? `<div class="banner warn">${pending} photo(s) on this device haven't uploaded. <button id="syncNow" class="btn small">Sync now</button></div>` : ""}
-      ${files.length ? `<p class="hint">${files.length} photo(s) ready · names follow <code>ID-YYMMDD</code>.</p>` : `<p class="empty">No photos on the server yet.</p>`}
-      <ul class="file-list">${rows}</ul>
       ${files.length ? `
-      <div class="export-actions">
-        ${fsa ? `<button id="exportFolder" class="btn primary block">Save all to a folder…</button>` : ""}
-        <button id="downloadAll" class="btn ${fsa ? "secondary" : "primary"} block">Download all</button>
-        <button id="copyNames" class="btn secondary block">Copy filename list</button>
-      </div>
-      <div class="notify">
-        <h3>Notify the engineer</h3>
-        <input id="emailInput" class="search" list="recips" type="email" placeholder="engineer@example.com" />
-        <datalist id="recips">${datalist}</datalist>
-        ${emailReady
-          ? `<button id="sendBtn" class="btn primary block">Send email</button>
-             <button id="composeBtn" class="btn secondary block">Compose in mail app instead</button>`
-          : `<button id="composeBtn" class="btn secondary block">Compose email with file list</button>
-             <p class="hint">Tip: set up automatic sending under Setup to send without opening your mail app.</p>`}
-      </div>
-      ${App.localCaptures.length
-        ? `<button id="clearLocal" class="btn danger block">Clear photos saved on this device (${App.localCaptures.length})</button>`
-        : ""}` : ""}`;
+        <div class="notify">
+          <label class="fieldlabel" for="emailInput">Email recipient (used by “Email this day”)</label>
+          <input id="emailInput" class="search" type="email" list="recips"
+            name="bsh-notify-recipient" autocomplete="off" autocapitalize="off"
+            autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true"
+            data-form-type="other" placeholder="engineer@example.com" />
+          <datalist id="recips">${datalist}</datalist>
+          <p class="hint">${emailReady ? "Emailing sends automatically." : "Emailing opens your mail app. Set up automatic sending under Setup."}</p>
+        </div>
+        ${dates.map(dayBlock).join("")}
+        ${App.localCaptures.length ? `<button id="clearLocal" class="btn danger block">Clear photos saved on this device (${App.localCaptures.length})</button>` : ""}
+      ` : `<p class="empty">No photos on the server yet.</p>`}`;
 
     wireThumbs(el("view"));
     if (pending) el("syncNow").addEventListener("click", syncAllPending);
     if (!files.length) return;
-    if (fsa) el("exportFolder").addEventListener("click", () => exportToFolder(files));
-    el("downloadAll").addEventListener("click", () => downloadAll(files));
-    el("copyNames").addEventListener("click", () => copyNames(files));
-    if (emailReady) el("sendBtn").addEventListener("click", () => sendEmail(files));
-    el("composeBtn").addEventListener("click", () => composeEmail(files));
+    el("view").querySelectorAll("[data-act]").forEach((b) =>
+      b.addEventListener("click", () => {
+        const df = byDate.get(b.dataset.date) || [];
+        if (b.dataset.act === "folder") exportToFolder(df);
+        else if (b.dataset.act === "download") downloadAll(df);
+        else if (b.dataset.act === "email") (emailReady ? sendEmail(df, b) : composeEmail(df));
+      })
+    );
     if (App.localCaptures.length) el("clearLocal").addEventListener("click", clearLocalCopies);
   }
 
-  async function sendEmail(files) {
+  async function sendEmail(files, btn) {
     const to = (el("emailInput").value || "").trim();
     if (!to) return setStatus("Enter an email address first.", "warn");
-    const btn = el("sendBtn");
-    btn.disabled = true;
-    btn.textContent = "Sending…";
-    const subject = `Bridge sign photos, ${todayStr()}`;
+    const label = btn ? btn.textContent : "";
+    if (btn) { btn.disabled = true; btn.textContent = "Sending…"; }
+    const subject = `Bridge sign photos, ${files[0] ? files[0].batch_date : todayStr()}`;
     const body =
       "The following sign inspection photos have been added:\n\n" +
       files.map((f) => f.filename).join("\n") + "\n";
@@ -565,8 +588,8 @@
       setStatus(`Email sent to ${to}.`, "ok");
     } catch (e) {
       setStatus(`Send failed: ${e.message}. You can use Compose instead.`, "warn", 9000);
-      btn.disabled = false;
-      btn.textContent = "Send email";
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = label || "Email this day"; }
     }
   }
 
@@ -664,21 +687,21 @@
         <p class="hint">${App.online ? `${App.signs.length} sign(s) loaded from the server.` : "Offline. Can't reach the server."}</p>
       </div>
       <div class="setup-card">
-        <h3>Email notifications</h3>
+        <p class="hint">Signed in as <strong>${esc(SB.currentUser() || "")}</strong></p>
+        <button id="logoutBtn" class="btn secondary block">Log out</button>
+      </div>
+      <details class="setup-card collapsible"${emailReady ? "" : ""}>
+        <summary>Email notifications ${emailReady ? '<span class="chip ok">on</span>' : '<span class="chip">off</span>'}</summary>
         <p class="hint">${emailReady
           ? "Automatic sending is set up. Review can send email directly."
           : "Not set up yet. Until then, Review composes an email in your mail app. Steps: docs/EMAIL_SETUP.md."}</p>
         <label class="field"><span>Apps Script Web App URL</span>
-          <input id="whUrl" type="url" placeholder="https://script.google.com/macros/s/…/exec" value="${esc(App.settings.email_webhook_url || "")}" /></label>
+          <input id="whUrl" type="url" autocomplete="off" data-lpignore="true" placeholder="https://script.google.com/macros/s/…/exec" value="${esc(App.settings.email_webhook_url || "")}" /></label>
         <label class="field"><span>Shared token (paste this same value into the script)</span>
-          <input id="whToken" type="text" value="${esc(tokenVal)}" /></label>
+          <input id="whToken" type="text" autocomplete="off" data-lpignore="true" value="${esc(tokenVal)}" /></label>
         <button id="saveEmail" class="btn primary block">Save email settings</button>
         <button id="testEmail" class="btn secondary block">Send a test email</button>
-      </div>
-      <div class="setup-card">
-        <p class="hint">Signed in as <strong>${esc(SB.currentUser() || "")}</strong></p>
-        <button id="logoutBtn" class="btn secondary block">Log out</button>
-      </div>`;
+      </details>`;
 
     el("fileInput").addEventListener("change", (e) => handleFile(e.target.files[0]));
     el("typeSel").value = p ? p.type : "advance";
@@ -942,6 +965,22 @@
     if (App.localCaptures.some((c) => c.status !== "synced")) syncAllPending();
   }
 
+  function applyTheme(t) {
+    document.documentElement.setAttribute("data-theme", t);
+    const b = el("themeToggle");
+    if (b) b.textContent = t === "dark" ? "☀️" : "🌙";
+  }
+  function initTheme() {
+    let t = localStorage.getItem("bsh_theme");
+    if (!t) t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    applyTheme(t);
+  }
+  function toggleTheme() {
+    const next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+    localStorage.setItem("bsh_theme", next);
+    applyTheme(next);
+  }
+
   function detectDevice() {
     const mobile =
       (matchMedia("(pointer: coarse)").matches && matchMedia("(max-width: 900px)").matches) ||
@@ -952,7 +991,9 @@
   }
 
   async function init() {
+    initTheme();
     detectDevice();
+    el("themeToggle").addEventListener("click", toggleTheme);
     el("navSetup").addEventListener("click", () => { App.screen = "setup"; render(); });
     el("navSigns").addEventListener("click", () => { App.screen = "signs"; render(); });
     el("navReview").addEventListener("click", () => { App.screen = "review"; render(); });
