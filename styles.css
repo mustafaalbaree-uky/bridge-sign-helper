@@ -141,6 +141,8 @@ code { font-family: ui-monospace, Menlo, Consolas, monospace; background: var(--
   margin-bottom: 10px; box-shadow: var(--shadow); cursor: pointer;
 }
 .sign-item:active { transform: scale(0.995); }
+.sign-cb { width: 20px; height: 20px; accent-color: var(--accent-strong); flex: none; }
+.sub-actions { margin: 2px 0 6px; }
 .sign-main { flex: 1; min-width: 0; }
 .sign-id { font-weight: 700; font-size: 1.05rem; word-break: break-all; }
 .sign-sub { color: var(--muted); font-size: 0.85rem; margin-top: 2px; }

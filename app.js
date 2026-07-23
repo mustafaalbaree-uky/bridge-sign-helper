@@ -19,6 +19,9 @@
     settings: {}, // key/value app settings (e.g. email webhook)
     captures: [], // cached server captures (for counts + photos-on-file)
     photoCounts: {}, // signId -> number of photos on the server
+    signDone: {}, // signId -> true if it has photos and all are saved+emailed
+    selectMode: false, // signs-list multi-select for deletion
+    selectedSigns: new Set(),
     isMobile: false,
     parsed: null, // staged Excel import { type, rows, sheetNames, sheet }
   };
@@ -106,20 +109,32 @@
   // Cache every capture once. Feeds both the signs-list counts and the
   // "Photos on file" section (so both are instant, no per-click network wait).
   // Returns true if the per-sign counts changed.
+  // Rebuild per-sign counts and completion from the capture cache.
+  function recomputeDerived() {
+    const counts = {}, done = {}, any = {};
+    for (const r of App.captures) {
+      counts[r.sign_id] = (counts[r.sign_id] || 0) + 1;
+      any[r.sign_id] = true;
+      const complete = !!(r.exported_at && r.emailed_at);
+      done[r.sign_id] = done[r.sign_id] === undefined ? complete : done[r.sign_id] && complete;
+    }
+    App.photoCounts = counts;
+    App.signDone = {};
+    for (const id in any) App.signDone[id] = !!done[id];
+  }
+
   async function refreshCaptures() {
     try {
       const rows = await SB.select(
         "captures",
-        "select=sign_id,slot,batch_date,storage_path,captured_at&order=batch_date.desc,slot.asc"
+        "select=sign_id,slot,batch_date,storage_path,captured_at,exported_at,emailed_at&order=batch_date.desc,slot.asc"
       );
       // Guard against a transient empty result wiping the badges.
       if (!rows.length && App.captures.length) return false;
       App.captures = rows;
-      const m = {};
-      for (const r of rows) m[r.sign_id] = (m[r.sign_id] || 0) + 1;
-      const changed = JSON.stringify(m) !== JSON.stringify(App.photoCounts);
-      App.photoCounts = m;
-      return changed;
+      const before = JSON.stringify(App.photoCounts);
+      recomputeDerived();
+      return JSON.stringify(App.photoCounts) !== before;
     } catch {
       return false; // keep whatever we had
     }
@@ -297,11 +312,40 @@
           autocomplete="off" placeholder="Search ID, route, county…" value="${esc(App.search)}" />
         <button id="locateBtn" class="btn secondary">📍 Sort by nearest</button>
       </div>${note}
+      ${App.selectMode
+        ? `<div class="sel-bar">
+             <button id="selCompleted" class="btn small secondary">Select completed</button>
+             <span id="signSelSummary" class="sel-summary"></span>
+             <button id="signDelete" class="btn small danger">Delete</button>
+             <button id="signCancel" class="btn small secondary">Cancel</button>
+           </div>`
+        : `<div class="sub-actions"><button id="enterSelect" class="btn link">Select signs to delete…</button></div>`}
       <ul id="signList" class="sign-list"></ul>`;
 
     renderSignList();
+    updateSignSelSummary();
     el("searchInput").addEventListener("input", (e) => { App.search = e.target.value; renderSignList(); });
     el("locateBtn").addEventListener("click", requestLocation);
+    if (App.selectMode) {
+      el("selCompleted").addEventListener("click", () => {
+        App.signs.forEach((s) => { if (App.signDone[s.id]) App.selectedSigns.add(s.id); });
+        renderSignList();
+        updateSignSelSummary();
+      });
+      el("signCancel").addEventListener("click", () => { App.selectMode = false; App.selectedSigns = new Set(); renderSigns(); });
+      el("signDelete").addEventListener("click", () => {
+        const ids = [...App.selectedSigns];
+        if (!ids.length) return setStatus("Select at least one sign.", "warn");
+        showSignDeleteConfirm(ids);
+      });
+    } else {
+      el("enterSelect").addEventListener("click", () => { App.selectMode = true; App.selectedSigns = new Set(); renderSigns(); });
+    }
+  }
+
+  function updateSignSelSummary() {
+    const s = el("signSelSummary");
+    if (s) s.textContent = `${App.selectedSigns.size} selected`;
   }
 
   function renderSignList() {
@@ -326,10 +370,13 @@
           const localN = App.localCaptures.filter((c) => c.signId === s.id).length;
           const caps = Math.max(App.photoCounts[s.id] || 0, localN);
           const badge = caps ? `<span class="badge done">${caps} Photo${caps > 1 ? "s" : ""}</span>` : "";
+          const doneChip = App.signDone[s.id] ? `<span class="chip ok">✓ Done</span>` : "";
           const dist = s._d != null ? `<span class="dist">${fmtDistance(s._d)}</span>` : "";
-          return `<li class="sign-item" data-id="${esc(s.id)}">
+          const cb = App.selectMode ? `<input type="checkbox" class="sign-cb" ${App.selectedSigns.has(s.id) ? "checked" : ""} />` : "";
+          return `<li class="sign-item ${App.selectMode ? "selecting" : ""}" data-id="${esc(s.id)}">
+              ${cb}
               <div class="sign-main">
-                <div class="sign-id">${esc(s.id)} ${badge}</div>
+                <div class="sign-id">${esc(s.id)} ${badge}${doneChip}</div>
                 <div class="sign-sub">${esc(s.county)} · ${esc(s.route)} · MP ${esc(s.mile_point)} · ${esc(s.direction)} · ${esc(s.side_of_road)}</div>
               </div>${dist}
             </li>`;
@@ -337,7 +384,20 @@
         .join("") || `<li class="empty">No signs. Import a sheet under <strong>Setup</strong>.</li>`;
 
     ul.querySelectorAll(".sign-item").forEach((li) =>
-      li.addEventListener("click", () => { App.currentSignId = li.dataset.id; App.screen = "capture"; render(); })
+      li.addEventListener("click", () => {
+        const id = li.dataset.id;
+        if (App.selectMode) {
+          if (App.selectedSigns.has(id)) App.selectedSigns.delete(id);
+          else App.selectedSigns.add(id);
+          const cb = li.querySelector(".sign-cb");
+          if (cb) cb.checked = App.selectedSigns.has(id);
+          updateSignSelSummary();
+        } else {
+          App.currentSignId = id;
+          App.screen = "capture";
+          render();
+        }
+      })
     );
   }
 
@@ -772,9 +832,67 @@
       try { await SB.deletePhotos(paths); } catch { /* storage object may already be gone */ }
       const list = paths.map((p) => encodeURIComponent(`"${p}"`)).join(",");
       await SB.remove("captures", `storage_path=in.(${list})`);
-      await refreshCaptures();
+      // Update the cache immediately so counts/photos-on-file are right now,
+      // not only after a page refresh.
+      const del = new Set(paths);
+      App.captures = App.captures.filter((c) => !del.has(c.storage_path));
+      recomputeDerived();
+      refreshCaptures(); // reconcile in the background
       setStatus(`Deleted ${paths.length} photo(s).`, "ok");
       renderReview();
+    } catch (e) {
+      setStatus(`Delete failed: ${e.message}`, "warn", 9000);
+    }
+  }
+
+  // Confirm + delete whole signs (and their photos).
+  function showSignDeleteConfirm(ids) {
+    if (!ids.length) return;
+    const rowFor = (id) => {
+      const count = App.photoCounts[id] || 0;
+      const status = count === 0
+        ? `<span class="chip">no photos</span>`
+        : App.signDone[id]
+          ? `<span class="chip ok">completed</span>`
+          : `<span class="chip">${count} photo${count > 1 ? "s" : ""}, not all saved &amp; emailed</span>`;
+      return `<li><span class="mono">${esc(id)}</span>${status}</li>`;
+    };
+    const notDone = ids.filter((id) => (App.photoCounts[id] || 0) > 0 && !App.signDone[id]).length;
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.innerHTML = `<div class="modal">
+        <h3>Delete ${ids.length} sign${ids.length > 1 ? "s" : ""}?</h3>
+        <p class="hint">${notDone
+          ? `<strong>Warning: ${notDone} of these still have photos that aren't saved &amp; emailed — those photos will be lost.</strong> `
+          : ""}This removes the sign${ids.length > 1 ? "s" : ""} and any photos still on the server. The next Excel import can add them back. This can't be undone.</p>
+        <ul class="del-list">${ids.map(rowFor).join("")}</ul>
+        <div class="modal-actions">
+          <button class="btn secondary" data-mc="cancel">Cancel</button>
+          <button class="btn danger" data-mc="ok">Delete ${ids.length}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const close = () => overlay.remove();
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+    overlay.querySelector('[data-mc="cancel"]').addEventListener("click", close);
+    overlay.querySelector('[data-mc="ok"]').addEventListener("click", () => { close(); deleteSigns(ids); });
+  }
+
+  async function deleteSigns(ids) {
+    setStatus(`Deleting ${ids.length} sign(s)…`, null, 0);
+    try {
+      const idSet = new Set(ids);
+      const paths = App.captures.filter((c) => idSet.has(c.sign_id)).map((c) => c.storage_path);
+      if (paths.length) { try { await SB.deletePhotos(paths); } catch { /* may be gone */ } }
+      const idList = ids.map((i) => encodeURIComponent(`"${i}"`)).join(",");
+      await SB.remove("captures", `sign_id=in.(${idList})`);
+      await SB.remove("signs", `id=in.(${idList})`);
+      App.selectMode = false;
+      App.selectedSigns = new Set();
+      await loadSigns();
+      await refreshCaptures();
+      setStatus(`Deleted ${ids.length} sign(s).`, "ok");
+      render();
     } catch (e) {
       setStatus(`Delete failed: ${e.message}`, "warn", 9000);
     }
@@ -1352,9 +1470,9 @@
     initTheme();
     buildThemePanel();
     detectDevice();
-    el("navSetup").addEventListener("click", () => { App.screen = "setup"; render(); });
+    el("navSetup").addEventListener("click", () => { App.selectMode = false; App.screen = "setup"; render(); });
     el("navSigns").addEventListener("click", goSigns);
-    el("navReview").addEventListener("click", () => { reviewSelected = null; App.screen = "review"; render(); });
+    el("navReview").addEventListener("click", () => { App.selectMode = false; reviewSelected = null; App.screen = "review"; render(); });
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 
     if (SB.isLoggedIn()) await startApp();
