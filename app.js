@@ -506,6 +506,9 @@
     });
   }
 
+  // Which day-groups are ticked in Review. null = "select all" on next open.
+  let reviewSelected = null;
+
   async function renderReview() {
     el("view").innerHTML = `<p class="hint">Loading…</p>`;
     let remote = [];
@@ -536,6 +539,9 @@
       byDate.get(f.batch_date).push(f);
     }
     const dates = [...byDate.keys()].sort().reverse();
+    if (reviewSelected === null) reviewSelected = new Set(dates); // default: all
+    for (const d of [...reviewSelected]) if (!byDate.has(d)) reviewSelected.delete(d);
+    const selectedFiles = () => dates.filter((d) => reviewSelected.has(d)).flatMap((d) => byDate.get(d));
 
     const fileRow = (f) => `<li class="file-row">
         ${thumbs[f.storage_path] ? `<img src="${thumbs[f.storage_path]}" alt="" data-revoke />` : `<div class="thumb-missing">?</div>`}
@@ -547,15 +553,11 @@
       const df = byDate.get(date);
       const label = date === today ? "Today" : prettyDate(date);
       return `<section class="day-group">
-          <div class="day-head"><span class="day-label">${label}</span>
+          <div class="day-head">
+            <label class="day-check"><input type="checkbox" class="day-cb" data-date="${date}" ${reviewSelected.has(date) ? "checked" : ""} />
+              <span class="day-label">${label}</span></label>
             <span class="day-count">${df.length} photo${df.length > 1 ? "s" : ""}</span></div>
           <ul class="file-list">${df.map(fileRow).join("")}</ul>
-          <div class="day-actions">
-            ${fsa ? `<button class="btn small primary" data-act="folder" data-date="${date}">Save to folder</button>` : ""}
-            <button class="btn small secondary" data-act="download" data-date="${date}">Download</button>
-            ${emailReady ? `<button class="btn small secondary" data-act="send" data-date="${date}">Send email</button>` : ""}
-            <button class="btn small secondary" data-act="compose" data-date="${date}">Compose email</button>
-          </div>
         </section>`;
     };
 
@@ -575,7 +577,18 @@
             autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true"
             data-form-type="other" placeholder="engineer@example.com" />
           ${chips ? `<div class="recip-chips"><span class="recip-label">Saved:</span>${chips}</div>` : ""}
-          <p class="hint">${emailReady ? "“Send email” sends automatically. “Compose email” opens your mail app instead." : "“Compose email” opens your mail app with the file list ready to send."}</p>
+          <div class="sel-bar">
+            <span id="selSummary" class="sel-summary"></span>
+            <button id="selAll" class="btn small secondary">Select all</button>
+            <button id="selNone" class="btn small secondary">Clear</button>
+          </div>
+          <div class="day-actions">
+            ${fsa ? `<button id="actFolder" class="btn small primary">Save to folder</button>` : ""}
+            <button id="actDownload" class="btn small secondary">Download</button>
+            ${emailReady ? `<button id="actSend" class="btn small secondary">Send email</button>` : ""}
+            <button id="actCompose" class="btn small secondary">Compose email</button>
+          </div>
+          <p class="hint">Tick the days below to include, then these buttons act on all selected days at once.</p>
         </div>
         ${dates.map(dayBlock).join("")}
         ${App.localCaptures.length ? `<button id="clearLocal" class="btn danger block">Clear photos saved on this device (${App.localCaptures.length})</button>` : ""}
@@ -584,20 +597,59 @@
     wireThumbs(el("view"));
     if (pending) el("syncNow").addEventListener("click", syncAllPending);
     if (!files.length) return;
-    el("view").querySelectorAll("[data-act]").forEach((b) =>
-      b.addEventListener("click", () => {
-        const df = byDate.get(b.dataset.date) || [];
-        const a = b.dataset.act;
-        if (a === "folder") exportToFolder(df);
-        else if (a === "download") downloadAll(df);
-        else if (a === "send") sendEmail(df, b);
-        else if (a === "compose") composeEmail(df);
+
+    const updateSummary = () => {
+      const days = dates.filter((d) => reviewSelected.has(d));
+      const photos = days.reduce((n, d) => n + byDate.get(d).length, 0);
+      el("selSummary").textContent = `${days.length} day${days.length !== 1 ? "s" : ""}, ${photos} photo${photos !== 1 ? "s" : ""} selected`;
+    };
+    updateSummary();
+
+    el("view").querySelectorAll(".day-cb").forEach((cb) =>
+      cb.addEventListener("change", () => {
+        if (cb.checked) reviewSelected.add(cb.dataset.date);
+        else reviewSelected.delete(cb.dataset.date);
+        updateSummary();
       })
     );
+    el("selAll").addEventListener("click", () => {
+      dates.forEach((d) => reviewSelected.add(d));
+      el("view").querySelectorAll(".day-cb").forEach((cb) => (cb.checked = true));
+      updateSummary();
+    });
+    el("selNone").addEventListener("click", () => {
+      reviewSelected.clear();
+      el("view").querySelectorAll(".day-cb").forEach((cb) => (cb.checked = false));
+      updateSummary();
+    });
+
+    const act = (fn, btn) => {
+      const f = selectedFiles();
+      if (!f.length) return setStatus("Tick at least one day first.", "warn");
+      fn(f, btn);
+    };
+    if (fsa) el("actFolder").addEventListener("click", () => act(exportToFolder));
+    el("actDownload").addEventListener("click", () => act(downloadAll));
+    if (emailReady) el("actSend").addEventListener("click", (e) => act(sendEmail, e.currentTarget));
+    el("actCompose").addEventListener("click", () => act(composeEmail));
+
     el("view").querySelectorAll(".recip-chip").forEach((c) =>
       c.addEventListener("click", () => { el("emailInput").value = c.dataset.email; el("emailInput").focus(); })
     );
     if (App.localCaptures.length) el("clearLocal").addEventListener("click", clearLocalCopies);
+  }
+
+  // Subject + body for a set of files that may span multiple days.
+  function emailSubjectBody(files) {
+    const dset = [...new Set(files.map((f) => f.batch_date))].sort();
+    const subject = dset.length <= 1
+      ? `Bridge sign photos, ${dset[0] || todayStr()}`
+      : `Bridge sign photos, ${dset[0]} to ${dset[dset.length - 1]} (${dset.length} days)`;
+    const sorted = [...files].sort((a, b) =>
+      a.batch_date.localeCompare(b.batch_date) || a.filename.localeCompare(b.filename));
+    const body = "The following sign inspection photos have been added:\n\n" +
+      sorted.map((f) => f.filename).join("\n") + "\n";
+    return { subject, body };
   }
 
   async function sendEmail(files, btn) {
@@ -605,10 +657,7 @@
     if (!to) return setStatus("Enter an email address first.", "warn");
     const label = btn ? btn.textContent : "";
     if (btn) { btn.disabled = true; btn.textContent = "Sending…"; }
-    const subject = `Bridge sign photos, ${files[0] ? files[0].batch_date : todayStr()}`;
-    const body =
-      "The following sign inspection photos have been added:\n\n" +
-      files.map((f) => f.filename).join("\n") + "\n";
+    const { subject, body } = emailSubjectBody(files);
     try {
       try { await SB.upsert("recipients", { email: to }, "email"); await loadRecipients(); } catch {}
       await SB.invoke("notify", { to, subject, body });
@@ -616,7 +665,7 @@
     } catch (e) {
       setStatus(`Send failed: ${e.message}. You can use Compose instead.`, "warn", 9000);
     } finally {
-      if (btn) { btn.disabled = false; btn.textContent = label || "Email this day"; }
+      if (btn) { btn.disabled = false; btn.textContent = label || "Send email"; }
     }
   }
 
@@ -665,13 +714,8 @@
 
   async function composeEmail(files) {
     const to = (el("emailInput").value || "").trim();
-    if (!to) return setStatus("Enter an email address first.", "warn");
-    try { await SB.upsert("recipients", { email: to }, "email"); await loadRecipients(); } catch {}
-    const subject = `Bridge sign photos, ${todayStr()}`;
-    const body =
-      "The following sign inspection photos have been added:\n\n" +
-      files.map((f) => f.filename).join("\n") +
-      "\n";
+    if (to) { try { await SB.upsert("recipients", { email: to }, "email"); await loadRecipients(); } catch {} }
+    const { subject, body } = emailSubjectBody(files);
     window.location.href = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
   }
 
@@ -1088,7 +1132,7 @@
     el("themeToggle").addEventListener("click", toggleTheme);
     el("navSetup").addEventListener("click", () => { App.screen = "setup"; render(); });
     el("navSigns").addEventListener("click", goSigns);
-    el("navReview").addEventListener("click", () => { App.screen = "review"; render(); });
+    el("navReview").addEventListener("click", () => { reviewSelected = null; App.screen = "review"; render(); });
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 
     if (SB.isLoggedIn()) await startApp();
