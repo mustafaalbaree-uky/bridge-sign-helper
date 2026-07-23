@@ -17,6 +17,7 @@
     remoteCaptures: [],
     recipients: [],
     settings: {}, // key/value app settings (e.g. email webhook)
+    photoCounts: {}, // signId -> number of photos on the server
     isMobile: false,
     parsed: null, // staged Excel import { type, rows, sheetNames, sheet }
   };
@@ -99,6 +100,15 @@
 
   async function loadLocalCaptures() {
     App.localCaptures = await DB.allCaptures();
+  }
+
+  async function loadPhotoCounts() {
+    try {
+      const rows = await SB.select("captures", "select=sign_id");
+      const m = {};
+      for (const r of rows) m[r.sign_id] = (m[r.sign_id] || 0) + 1;
+      App.photoCounts = m;
+    } catch { /* keep whatever we had */ }
   }
 
   async function loadRecipients() {
@@ -227,6 +237,15 @@
     else renderSigns();
   }
 
+  // Go to the signs list and refresh photo counts from the server in the
+  // background (badge updates once they arrive).
+  function goSigns() {
+    editing = false;
+    App.screen = "signs";
+    render();
+    loadPhotoCounts().then(() => { if (App.screen === "signs") render(); });
+  }
+
   // ---- rendering: signs list -------------------------------------------------
   function renderSigns() {
     const q = App.search.trim().toLowerCase();
@@ -242,11 +261,11 @@
         .sort((a, b) => a._d - b._d)
         .concat(list.filter((s) => s.lat == null || s.lng == null));
 
-    const today = todayStr();
     const rows = list
       .map((s) => {
-        const caps = App.localCaptures.filter((c) => c.signId === s.id && c.batchDate === today).length;
-        const badge = caps ? `<span class="badge done">✓ ${caps}</span>` : "";
+        const localN = App.localCaptures.filter((c) => c.signId === s.id).length;
+        const caps = Math.max(App.photoCounts[s.id] || 0, localN);
+        const badge = caps ? `<span class="badge done">${caps} Photo${caps > 1 ? "s" : ""}</span>` : "";
         const dist = s._d != null ? `<span class="dist">${fmtDistance(s._d)}</span>` : "";
         return `<li class="sign-item" data-id="${esc(s.id)}">
             <div class="sign-main">
@@ -338,9 +357,9 @@
       <button id="editToggle" class="btn link">${editing ? "Cancel editing" : "Edit sign details"}</button>
       ${editing ? editForm(sign) : ""}`;
 
-    el("backBtn").addEventListener("click", () => { editing = false; App.screen = "signs"; render(); });
+    el("backBtn").addEventListener("click", goSigns);
     el("doneBtn").addEventListener("click", () => {
-      editing = false; App.screen = "signs"; render();
+      goSigns();
       if (App.localCaptures.some((c) => c.status !== "synced")) syncAllPending();
     });
     el("view").querySelectorAll('input[type="file"]').forEach((inp) =>
@@ -967,6 +986,7 @@
     await loadSigns();
     loadRecipients();
     await loadSettings();
+    await loadPhotoCounts();
     render();
     if (App.localCaptures.some((c) => c.status !== "synced")) syncAllPending();
   }
@@ -1001,7 +1021,7 @@
     detectDevice();
     el("themeToggle").addEventListener("click", toggleTheme);
     el("navSetup").addEventListener("click", () => { App.screen = "setup"; render(); });
-    el("navSigns").addEventListener("click", () => { App.screen = "signs"; render(); });
+    el("navSigns").addEventListener("click", goSigns);
     el("navReview").addEventListener("click", () => { App.screen = "review"; render(); });
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 
