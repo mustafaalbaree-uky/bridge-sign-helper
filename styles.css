@@ -225,6 +225,11 @@ code { font-family: ui-monospace, Menlo, Consolas, monospace; background: var(--
 .setup-card h3 { margin: 0 0 8px; font-size: 1rem; }
 .collapsible summary { font-weight: 700; cursor: pointer; list-style: revert; }
 .collapsible[open] summary { margin-bottom: 10px; }
+.method-toggle { display: flex; gap: 8px; margin: 6px 0 10px; }
+.method-opt { flex: 1; display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; cursor: pointer; font-size: 0.9rem; }
+.method-opt:has(input:checked) { border-color: var(--accent-strong); box-shadow: inset 0 0 0 1px var(--accent-strong); }
+.method-opt input { accent-color: var(--accent-strong); }
+.method-panel { margin-bottom: 6px; }
 .check-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; cursor: pointer; font-size: 0.9rem; }
 .check-row input { width: 18px; height: 18px; accent-color: var(--accent-strong); flex: none; }
 .sub { margin: 8px 0; }

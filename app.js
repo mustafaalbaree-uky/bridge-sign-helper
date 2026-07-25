@@ -1012,6 +1012,7 @@
     const p = App.parsed;
     const emailReady = emailConfigured();
     const tokenVal = App.settings.email_webhook_token || pendingToken || (pendingToken = randToken());
+    const emailMethod = App.settings.email_method === "webhook" ? "webhook" : "gmail";
     el("view").innerHTML = `
       <h2 class="screen-title">Setup: import signs</h2>
       <p class="hint">Load the Excel sheet on the computer. Existing IDs are updated; new ones are added. Do this again whenever the sheet changes.</p>
@@ -1042,16 +1043,28 @@
         <summary>Email notifications ${emailReady ? '<span class="chip ok">on</span>' : '<span class="chip">off</span>'}</summary>
         <label class="check-row"><input type="checkbox" id="emailEnabled" ${emailConfigured() ? "checked" : ""} />
           <span>Enable automatic sending (shows the “Send email” button in Review)</span></label>
-        <p class="hint"><strong>Gmail (recommended):</strong> in the Supabase dashboard → Edge Functions → Secrets, add
-          <code>GMAIL_USER</code> (the sending address) and <code>GMAIL_APP_PASSWORD</code> (a Google app password).
-          Then tick the box above, Save, and send a test. See docs/EMAIL_SETUP.md.</p>
-        <details class="sub">
-          <summary>Alternative: Google Apps Script webhook</summary>
+
+        <p class="fieldlabel">Sending method</p>
+        <div class="method-toggle">
+          <label class="method-opt"><input type="radio" name="emailMethod" value="gmail" ${emailMethod !== "webhook" ? "checked" : ""} />
+            <span>Gmail (app password)</span></label>
+          <label class="method-opt"><input type="radio" name="emailMethod" value="webhook" ${emailMethod === "webhook" ? "checked" : ""} />
+            <span>Google Apps Script</span></label>
+        </div>
+
+        <div id="methodGmail" class="method-panel" ${emailMethod === "webhook" ? "hidden" : ""}>
+          <p class="hint">In the Supabase dashboard → Edge Functions → Secrets, add
+            <code>GMAIL_USER</code> (the sending address) and <code>GMAIL_APP_PASSWORD</code> (a Google app password).
+            Then Save and send a test. See docs/EMAIL_SETUP.md.</p>
+        </div>
+
+        <div id="methodWebhook" class="method-panel" ${emailMethod === "webhook" ? "" : "hidden"}>
           <label class="field"><span>Apps Script Web App URL</span>
             <input id="whUrl" type="url" autocomplete="off" data-lpignore="true" placeholder="https://script.google.com/macros/s/…/exec" value="${esc(App.settings.email_webhook_url || "")}" /></label>
           <label class="field"><span>Shared token (paste this same value into the script)</span>
             <input id="whToken" type="text" autocomplete="off" data-lpignore="true" value="${esc(tokenVal)}" /></label>
-        </details>
+        </div>
+
         <button id="saveEmail" class="btn primary block">Save email settings</button>
         <button id="testEmail" class="btn secondary block">Send a test email</button>
       </details>
@@ -1075,9 +1088,19 @@
     const imp = el("importBtn");
     if (imp) imp.addEventListener("click", doImport);
 
+    document.querySelectorAll('input[name="emailMethod"]').forEach((r) =>
+      r.addEventListener("change", () => {
+        const method = document.querySelector('input[name="emailMethod"]:checked').value;
+        el("methodGmail").hidden = method !== "gmail";
+        el("methodWebhook").hidden = method !== "webhook";
+      })
+    );
+
     async function saveEmailSettings() {
+      const method = document.querySelector('input[name="emailMethod"]:checked').value;
       await SB.upsert("settings", [
         { key: "email_enabled", value: el("emailEnabled").checked ? "true" : "false" },
+        { key: "email_method", value: method },
         { key: "email_webhook_url", value: el("whUrl").value.trim() },
         { key: "email_webhook_token", value: el("whToken").value.trim() },
       ], "key");
