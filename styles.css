@@ -143,7 +143,10 @@ code { font-family: ui-monospace, Menlo, Consolas, monospace; background: var(--
 }
 .sign-item:active { transform: scale(0.995); }
 .sign-cb { width: 20px; height: 20px; accent-color: var(--accent-strong); flex: none; }
-.sub-actions { margin: 2px 0 6px; }
+.sub-actions { margin: 2px 0 6px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.filter-chip { display: inline-flex; align-items: center; gap: 7px; font-size: 0.85rem; color: var(--muted); cursor: pointer; }
+.filter-chip input { width: 17px; height: 17px; accent-color: var(--accent-strong); }
+.done-banner { background: var(--ok-bg); border-color: transparent; color: var(--ok); font-weight: 600; }
 .sign-main { flex: 1; min-width: 0; }
 .sign-id { font-weight: 700; font-size: 1.05rem; word-break: break-all; }
 .sign-sub { color: var(--muted); font-size: 0.85rem; margin-top: 2px; }

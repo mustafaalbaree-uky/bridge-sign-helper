@@ -23,6 +23,7 @@
     selectMode: false, // signs-list multi-select for deletion
     selectedSigns: new Set(),
     role: null, // 'engineer' switches to the receipt-confirmation UI
+    hideCompleted: false, // signs-list filter
     isMobile: false,
     parsed: null, // staged Excel import { type, rows, sheetNames, sheet }
   };
@@ -130,8 +131,8 @@
         "captures",
         "select=sign_id,slot,batch_date,storage_path,captured_at,exported_at,emailed_at&order=batch_date.desc,slot.asc"
       );
-      // Guard against a transient empty result wiping the badges.
-      if (!rows.length && App.captures.length) return false;
+      // A successful empty response is real (everything was deleted), so it
+      // must be honored; a failed fetch throws and is handled below.
       App.captures = rows;
       const before = JSON.stringify(App.photoCounts);
       recomputeDerived();
@@ -184,6 +185,13 @@
   }
 
   const isEngineer = () => App.role === "engineer";
+
+  // A bridge counts as complete if its current photos are all saved+emailed,
+  // or if it was completed earlier (recorded on the sign, so it survives the
+  // photos being deleted).
+  function signComplete(s) {
+    return !!(App.signDone[s.id] || s.completed_at);
+  }
 
   // ---- geolocation -----------------------------------------------------------
   function requestLocation() {
@@ -333,16 +341,23 @@
              <button id="signDelete" class="btn small danger">Delete</button>
              <button id="signCancel" class="btn small secondary">Cancel</button>
            </div>`
-        : `<div class="sub-actions"><button id="enterSelect" class="btn link">Select signs to delete…</button></div>`}
+        : `<div class="sub-actions">
+             <label class="filter-chip"><input type="checkbox" id="hideDone" ${App.hideCompleted ? "checked" : ""} />
+               <span>Hide completed</span></label>
+             <button id="enterSelect" class="btn link">Select signs to delete…</button>
+           </div>`}
+      <div id="signCounts" class="hint"></div>
       <ul id="signList" class="sign-list"></ul>`;
 
     renderSignList();
     updateSignSelSummary();
     el("searchInput").addEventListener("input", (e) => { App.search = e.target.value; renderSignList(); });
     el("locateBtn").addEventListener("click", requestLocation);
+    const hideDone = el("hideDone");
+    if (hideDone) hideDone.addEventListener("change", (e) => { App.hideCompleted = e.target.checked; renderSignList(); });
     if (App.selectMode) {
       el("selCompleted").addEventListener("click", () => {
-        App.signs.forEach((s) => { if (App.signDone[s.id]) App.selectedSigns.add(s.id); });
+        visibleSigns().forEach((s) => { if (signComplete(s)) App.selectedSigns.add(s.id); });
         renderSignList();
         updateSignSelSummary();
       });
@@ -386,7 +401,17 @@
     const ul = el("signList");
     if (!ul) return;
     const q = App.search.trim().toLowerCase();
-    let list = visibleSigns().filter((s) => (s.active_status || "Active") !== "Inactive");
+    const all = visibleSigns().filter((s) => (s.active_status || "Active") !== "Inactive");
+
+    // Progress line: how much of the job is left.
+    const doneCount = all.filter(signComplete).length;
+    const counts = el("signCounts");
+    if (counts)
+      counts.textContent = all.length
+        ? `${doneCount} of ${all.length} completed · ${all.length - doneCount} remaining`
+        : "";
+
+    let list = App.hideCompleted ? all.filter((s) => !signComplete(s)) : all;
     if (q)
       list = list.filter((s) =>
         [s.id, s.county, s.route, s.direction, s.side_of_road, s.facility_carried, s.feature_intersect, s.district]
@@ -405,7 +430,9 @@
           const localN = App.localCaptures.filter((c) => c.signId === s.id).length;
           const caps = Math.max(App.photoCounts[s.id] || 0, localN);
           const badge = caps ? `<span class="badge done">${caps} Photo${caps > 1 ? "s" : ""}</span>` : "";
-          const doneChip = App.signDone[s.id] ? `<span class="chip ok">✓ Done</span>` : "";
+          const doneChip = signComplete(s)
+            ? `<span class="chip ok">✓ ${caps ? "Done" : "Completed, photos cleared"}</span>`
+            : "";
           const dist = s._d != null ? `<span class="dist">${fmtDistance(s._d)}</span>` : "";
           const cb = App.selectMode ? `<input type="checkbox" class="sign-cb" ${App.selectedSigns.has(s.id) ? "checked" : ""} />` : "";
           return `<li class="sign-item ${App.selectMode ? "selecting" : ""}" data-id="${esc(s.id)}">
@@ -416,7 +443,10 @@
               </div>${dist}
             </li>`;
         })
-        .join("") || `<li class="empty">No signs. Import a sheet under <strong>Setup</strong>.</li>`;
+        .join("") ||
+      (App.hideCompleted && all.length
+        ? `<li class="empty">Everything matching is completed. Untick “Hide completed” to see them.</li>`
+        : `<li class="empty">No signs. Import a sheet under <strong>Setup</strong>.</li>`);
 
     ul.querySelectorAll(".sign-item").forEach((li) =>
       li.addEventListener("click", () => {
@@ -467,8 +497,21 @@
            href="https://www.google.com/maps/search/?api=1&query=${sign.lat},${sign.lng}">Open in Google Maps</a>`
       : "";
 
+    // History banner so a cleared-out bridge doesn't look untouched.
+    const dOnly = (t) => (t ? new Date(t).toLocaleDateString() : "");
+    let doneBanner = "";
+    if (sign.completed_at || App.signDone[sign.id]) {
+      const bits = [];
+      if (sign.completed_at) bits.push(`saved and emailed ${dOnly(sign.completed_at)}`);
+      else bits.push("saved and emailed");
+      if (sign.archived_at) bits.push(`photos cleared ${dOnly(sign.archived_at)}`);
+      doneBanner = `<div class="banner done-banner">✓ This bridge is already done: ${esc(bits.join(", "))}.
+        You can still add new photos below if it needs redoing.</div>`;
+    }
+
     el("view").innerHTML = `
       <button id="backBtn" class="btn link">‹ All signs</button>
+      ${doneBanner}
       <div class="detail-card">
         <div class="detail-id">${esc(sign.id)}</div>
         <div class="detail-grid">${detailFields(sign)
@@ -495,6 +538,11 @@
     );
     wireThumbs(el("view"));
     loadOnFile(sign.id);
+    // Reconcile with the server in case photos were deleted elsewhere (e.g. by
+    // the engineer), so stale thumbnails don't linger.
+    refreshCaptures().then((changed) => {
+      if (changed && App.screen === "capture" && App.currentSignId === sign.id) render();
+    });
     el("editToggle").addEventListener("click", () => { editing = !editing; render(); });
     if (editing) wireEditForm(sign);
   }
@@ -608,6 +656,7 @@
       items.forEach((c, i) => {
         out.push({
           filename: `${signId}-${yymmddFromDate(batch)}${two ? i + 1 : ""}.${extFromPath(c.storage_path)}`,
+          sign_id: signId,
           storage_path: c.storage_path,
           captured_at: c.captured_at,
           batch_date: batch,
@@ -809,6 +858,7 @@
       const ok = await fn(f, btn);
       if (ok !== false) {
         await markPhotos(f.map((x) => x.storage_path), kind);
+        await stampCompletedSigns(); // persist completion before photos can be cleared
         renderReview(); // refresh the Saved/Emailed badges
       }
     };
@@ -875,8 +925,10 @@
       // Update the cache immediately so counts/photos-on-file are right now,
       // not only after a page refresh.
       const del = new Set(paths);
+      const affected = App.captures.filter((c) => del.has(c.storage_path)).map((c) => c.sign_id);
       App.captures = App.captures.filter((c) => !del.has(c.storage_path));
       recomputeDerived();
+      await stampArchivedSigns(affected);
       refreshCaptures(); // reconcile in the background
       setStatus(`Deleted ${paths.length} photo(s).`, "ok");
       renderReview();
@@ -1059,6 +1111,8 @@
         try { await SB.deletePhotos(paths); } catch { /* may already be gone */ }
         const list = paths.map((p) => encodeURIComponent(`"${p}"`)).join(",");
         await SB.remove("captures", `storage_path=in.(${list})`);
+        // Leave a trace on the bridge so the field list still shows it as done.
+        await stampArchivedSigns(files.map((f) => f.sign_id));
         setStatus(`Deleted ${paths.length} photo(s).`, "ok");
         engSelected = null;
         renderEngineer();
@@ -1119,6 +1173,37 @@
     } catch (e) {
       setStatus(`Delete failed: ${e.message}`, "warn", 9000);
     }
+  }
+
+  // Record on the sign itself that its photos were saved and emailed. This has
+  // to be persisted before the photos can be deleted, otherwise the completion
+  // history disappears with them.
+  async function stampCompletedSigns() {
+    try {
+      const rows = await SB.select("captures", "select=sign_id,exported_at,emailed_at");
+      const done = {};
+      for (const r of rows) {
+        const complete = !!(r.exported_at && r.emailed_at);
+        done[r.sign_id] = done[r.sign_id] === undefined ? complete : done[r.sign_id] && complete;
+      }
+      const already = new Set(App.signs.filter((s) => s.completed_at).map((s) => s.id));
+      const ids = Object.keys(done).filter((id) => done[id] && !already.has(id));
+      if (!ids.length) return;
+      const list = ids.map((i) => encodeURIComponent(`"${i}"`)).join(",");
+      await SB.update("signs", `id=in.(${list})`, { completed_at: new Date().toISOString() });
+      await loadSigns();
+    } catch { /* non-fatal: badge just won't update yet */ }
+  }
+
+  // Note that a sign's photos have been cleared off the server.
+  async function stampArchivedSigns(signIds) {
+    const ids = [...new Set(signIds)].filter(Boolean);
+    if (!ids.length) return;
+    try {
+      const list = ids.map((i) => encodeURIComponent(`"${i}"`)).join(",");
+      await SB.update("signs", `id=in.(${list})`, { archived_at: new Date().toISOString() });
+      await loadSigns();
+    } catch { /* non-fatal */ }
   }
 
   // Mark the given photos (by storage path) as exported or emailed.
