@@ -644,6 +644,7 @@
     App.remoteCaptures = remote;
     const files = buildExportList(remote);
     const pending = App.localCaptures.filter((c) => c.status !== "synced").length;
+    const uploadedLocal = App.localCaptures.filter((c) => c.status === "synced").length;
     const fsa = typeof window.showDirectoryPicker === "function";
     const emailReady = emailConfigured();
     const today = todayStr();
@@ -749,7 +750,8 @@
           <p class="hint">Tick individual photos or a whole day, then these buttons act on everything selected.</p>
         </div>
         ${dates.map(dayBlock).join("")}
-        ${App.localCaptures.length ? `<button id="clearLocal" class="btn danger block">Clear photos saved on this device (${App.localCaptures.length})</button>` : ""}
+        ${uploadedLocal ? `<button id="clearLocal" class="btn secondary block">Free up space: remove ${uploadedLocal} uploaded photo(s) from this device</button>
+          <p class="hint">Deletes only this phone's copies of photos already on the server. Photos waiting to upload are kept.</p>` : ""}
       ` : `<p class="empty">No photos on the server yet.</p>`}`;
 
     wireThumbs(el("view"));
@@ -827,7 +829,7 @@
         if (f) showDeleteConfirm([f]);
       })
     );
-    if (App.localCaptures.length) el("clearLocal").addEventListener("click", clearLocalCopies);
+    if (uploadedLocal) el("clearLocal").addEventListener("click", clearLocalCopies);
   }
 
   // Confirmation dialog that lists exactly what will be deleted, with status.
@@ -1231,11 +1233,23 @@
     return true;
   }
 
+  // Frees phone storage by dropping this device's copies of photos that are
+  // already uploaded. Photos still waiting to upload are never touched: those
+  // local copies are the only copies.
   async function clearLocalCopies() {
-    if (!confirm("Remove photos stored on THIS device? They stay on the server. Make sure everything is uploaded first.")) return;
-    await DB.clearCaptures();
+    const uploaded = App.localCaptures.filter((c) => c.status === "synced");
+    const pending = App.localCaptures.length - uploaded.length;
+    if (!uploaded.length) {
+      setStatus("Nothing to free up: no uploaded copies on this device.", "warn");
+      return;
+    }
+    const msg = `Remove ${uploaded.length} uploaded photo(s) from this device?\n\n` +
+      "They stay on the server and in Review; this only frees up space here." +
+      (pending ? `\n\n${pending} photo(s) not uploaded yet will be kept.` : "");
+    if (!confirm(msg)) return;
+    for (const c of uploaded) await DB.removeCapture(c.key);
     await loadLocalCaptures();
-    setStatus("Local copies cleared.", "ok");
+    setStatus(`Freed up ${uploaded.length} photo(s) from this device.`, "ok");
     render();
   }
 
@@ -1627,8 +1641,15 @@
     if (tabs) tabs.style.display = show ? "" : "none";
   }
 
+  // Header controls that only make sense once someone is signed in.
+  function showSignedInChrome(show) {
+    const eng = el("engLogout");
+    if (eng) eng.hidden = !show || !isEngineer();
+  }
+
   function renderLogin(prefillUser, err) {
     showChrome(false);
+    showSignedInChrome(false);
     setStatus("");
     el("view").innerHTML = `
       <div class="login-card">
@@ -1669,8 +1690,6 @@
     App.role = null;
     engSelected = null;
     editing = false;
-    const eng = el("engLogout");
-    if (eng) eng.hidden = true;
     renderLogin();
   }
 
@@ -1682,14 +1701,14 @@
     // The engineer gets a single-purpose screen: receive, confirm, delete.
     if (isEngineer()) {
       showChrome(false);
-      el("engLogout").hidden = false;
+      showSignedInChrome(true);
       engSelected = null;
       renderEngineer();
       return;
     }
 
     showChrome(true);
-    el("engLogout").hidden = true;
+    showSignedInChrome(true);
     App.screen = "signs";
     el("view").innerHTML = `<p class="hint">Loading…</p>`;
     await loadLocalCaptures();
