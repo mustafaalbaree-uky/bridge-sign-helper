@@ -22,6 +22,7 @@
     signDone: {}, // signId -> true if it has photos and all are saved+emailed
     selectMode: false, // signs-list multi-select for deletion
     selectedSigns: new Set(),
+    role: null, // 'engineer' switches to the receipt-confirmation UI
     isMobile: false,
     parsed: null, // staged Excel import { type, rows, sheetNames, sheet }
   };
@@ -172,6 +173,18 @@
     return App.settings.compose_enabled !== "false"; // default on
   }
 
+  // Advance weight-limit signs are hidden by default; bridge signs are the job.
+  function showAdvance() {
+    return App.settings.show_advance === "true";
+  }
+
+  // Signs visible in the field list, honoring the advance-signs setting.
+  function visibleSigns() {
+    return App.signs.filter((s) => showAdvance() || (s.type || "advance") !== "advance");
+  }
+
+  const isEngineer = () => App.role === "engineer";
+
   // ---- geolocation -----------------------------------------------------------
   function requestLocation() {
     const btn = el("locateBtn");
@@ -267,6 +280,7 @@
 
   // ---- rendering: chrome -----------------------------------------------------
   function render() {
+    if (isEngineer()) { renderEngineer(); return; }
     for (const [id, scr] of [["navSetup", "setup"], ["navSigns", "signs"], ["navReview", "review"]]) {
       const active = scr === "signs" ? App.screen === "signs" || App.screen === "capture" : App.screen === scr;
       el(id).classList.toggle("active", active);
@@ -348,14 +362,35 @@
     if (s) s.textContent = `${App.selectedSigns.size} selected`;
   }
 
+  // Label/value pairs for the detail card, per sheet type. Blanks are dropped.
+  function detailFields(s) {
+    const coords = s.lat != null && s.lng != null ? `${s.lat}, ${s.lng}` : "";
+    const pairs = (s.type || "advance") === "bridge"
+      ? [["County", s.county], ["District", s.district], ["Carries", s.facility_carried],
+         ["Over", s.feature_intersect], ["Description", s.description], ["Coordinates", coords]]
+      : [["County", s.county], ["Route", s.route], ["Mile point", s.mile_point],
+         ["Direction", s.direction], ["Side", s.side_of_road], ["Coordinates", coords]];
+    return pairs.filter(([, v]) => v !== "" && v != null);
+  }
+
+  // One-line summary under the ID; bridges and advance signs carry different data.
+  function signSubtitle(s) {
+    const parts = (s.type || "advance") === "bridge"
+      ? [s.county, s.district, s.facility_carried ? `carries ${s.facility_carried}` : "",
+         s.feature_intersect ? `over ${s.feature_intersect}` : ""]
+      : [s.county, s.route, s.mile_point != null ? `MP ${s.mile_point}` : "", s.direction, s.side_of_road];
+    return parts.filter(Boolean).join(" · ");
+  }
+
   function renderSignList() {
     const ul = el("signList");
     if (!ul) return;
     const q = App.search.trim().toLowerCase();
-    let list = App.signs.filter((s) => (s.active_status || "Active") !== "Inactive");
+    let list = visibleSigns().filter((s) => (s.active_status || "Active") !== "Inactive");
     if (q)
       list = list.filter((s) =>
-        [s.id, s.county, s.route, s.direction, s.side_of_road].join(" ").toLowerCase().includes(q)
+        [s.id, s.county, s.route, s.direction, s.side_of_road, s.facility_carried, s.feature_intersect, s.district]
+          .join(" ").toLowerCase().includes(q)
       );
     if (App.position)
       list = list
@@ -377,7 +412,7 @@
               ${cb}
               <div class="sign-main">
                 <div class="sign-id">${esc(s.id)} ${badge}${doneChip}</div>
-                <div class="sign-sub">${esc(s.county)} · ${esc(s.route)} · MP ${esc(s.mile_point)} · ${esc(s.direction)} · ${esc(s.side_of_road)}</div>
+                <div class="sign-sub">${esc(signSubtitle(s))}</div>
               </div>${dist}
             </li>`;
         })
@@ -436,14 +471,8 @@
       <button id="backBtn" class="btn link">‹ All signs</button>
       <div class="detail-card">
         <div class="detail-id">${esc(sign.id)}</div>
-        <div class="detail-grid">
-          <div><span>County</span>${esc(sign.county)}</div>
-          <div><span>Route</span>${esc(sign.route)}</div>
-          <div><span>Mile point</span>${esc(sign.mile_point)}</div>
-          <div><span>Direction</span>${esc(sign.direction)}</div>
-          <div><span>Side</span>${esc(sign.side_of_road)}</div>
-          <div><span>Coordinates</span>${esc(sign.lat)}, ${esc(sign.lng)}</div>
-        </div>
+        <div class="detail-grid">${detailFields(sign)
+          .map(([k, v]) => `<div><span>${esc(k)}</span>${esc(v)}</div>`).join("")}</div>
         ${mapsBtn}
       </div>
       <div class="confirm-note">Make sure the ID above matches the sign in front of you.</div>
@@ -584,6 +613,9 @@
           batch_date: batch,
           exported_at: c.exported_at,
           emailed_at: c.emailed_at,
+          saved_folder: c.saved_folder,
+          confirmed_at: c.confirmed_at,
+          confirmed_by: c.confirmed_by,
         });
       });
     }
@@ -643,9 +675,12 @@
     };
 
     const isDone = (f) => f.exported_at && f.emailed_at;
+    const confirmPill = (f) =>
+      f.confirmed_at ? `<span class="chip ok">Engineer confirmed</span>` : "";
     const statusPills = (f) =>
       (f.exported_at ? `<span class="chip ok">Saved</span>` : `<span class="chip">Not yet saved</span>`) +
-      (f.emailed_at ? `<span class="chip ok">Emailed</span>` : `<span class="chip">Not yet emailed</span>`);
+      (f.emailed_at ? `<span class="chip ok">Emailed</span>` : `<span class="chip">Not yet emailed</span>`) +
+      confirmPill(f);
 
     // perPhoto=true shows each photo's own status + a Delete pill (only when done).
     const fileRow = (f, perPhoto) => `<li class="file-row">
@@ -666,8 +701,11 @@
       const dayDone = nSaved === df.length && nEmailed === df.length;
       const dayFresh = nSaved === 0 && nEmailed === 0;
       const perPhoto = !dayDone && !dayFresh; // mixed → per-photo detail
+      const allConfirmed = df.every((f) => f.confirmed_at);
       const flags = dayDone
-        ? `<span class="chip ok">Saved</span><span class="chip ok">Emailed</span><button class="chip del" data-del-day="${date}">Delete</button>`
+        ? `<span class="chip ok">Saved</span><span class="chip ok">Emailed</span>` +
+          (allConfirmed ? `<span class="chip ok">Engineer confirmed</span>` : "") +
+          `<button class="chip del" data-del-day="${date}">Delete</button>`
         : dayFresh
           ? `<span class="chip">Not yet saved</span><span class="chip">Not yet emailed</span>`
           : "";
@@ -845,6 +883,189 @@
     }
   }
 
+  // ---- engineer view ---------------------------------------------------------
+  // A stripped-down screen for the bridge engineer: download the photos, confirm
+  // they were received, then delete them once confirmed.
+  let engSelected = null;
+
+  async function renderEngineer() {
+    el("view").innerHTML = `<p class="hint">Loading…</p>`;
+    let remote = [];
+    try {
+      remote = await SB.select("captures", `select=*&order=batch_date.desc,sign_id.asc,slot.asc`);
+    } catch {
+      el("view").innerHTML = `<div class="banner warn">Can't reach the server. Try again when you're online.</div>`;
+      return;
+    }
+    const files = buildExportList(remote);
+    const fsa = typeof window.showDirectoryPicker === "function";
+    const allPaths = new Set(files.map((f) => f.storage_path));
+    if (engSelected === null) engSelected = new Set(allPaths);
+    else for (const p of [...engSelected]) if (!allPaths.has(p)) engSelected.delete(p);
+    const selected = () => files.filter((f) => engSelected.has(f.storage_path));
+
+    const thumbs = {};
+    await Promise.all(files.map(async (f) => {
+      try { thumbs[f.storage_path] = preview(await SB.downloadPhoto(f.storage_path)); } catch {}
+    }));
+
+    // Group by the folder Brian saved them into, so the engineer sees the same
+    // organization described in the notification email.
+    const byFolder = new Map();
+    for (const f of files) {
+      const key = f.saved_folder || "Not saved to a folder yet";
+      if (!byFolder.has(key)) byFolder.set(key, []);
+      byFolder.get(key).push(f);
+    }
+
+    const row = (f) => `<li class="file-row">
+        <input type="checkbox" class="eng-cb" data-path="${esc(f.storage_path)}" ${engSelected.has(f.storage_path) ? "checked" : ""} />
+        ${thumbs[f.storage_path] ? `<img src="${thumbs[f.storage_path]}" alt="" data-revoke />` : `<div class="thumb-missing">?</div>`}
+        <div class="file-meta">
+          <div class="file-name">${esc(f.filename)}</div>
+          <div class="pill-row">${f.confirmed_at
+            ? `<span class="chip ok">Confirmed received</span>`
+            : `<span class="chip">Awaiting your confirmation</span>`}</div>
+        </div>
+      </li>`;
+
+    const groups = [...byFolder.entries()].map(([folder, fs]) => {
+      const allConfirmed = fs.every((f) => f.confirmed_at);
+      return `<section class="day-group">
+          <div class="day-head">
+            <label class="day-check"><input type="checkbox" class="eng-folder-cb" data-folder="${esc(folder)}" ${fs.every((f) => engSelected.has(f.storage_path)) ? "checked" : ""} />
+              <span class="day-label">${esc(folder)}</span></label>
+            <span class="day-flags">${allConfirmed ? `<span class="chip ok">All confirmed</span>` : ""}</span>
+            <span class="day-count">${fs.length} photo${fs.length > 1 ? "s" : ""}</span>
+          </div>
+          <ul class="file-list">${fs.map(row).join("")}</ul>
+        </section>`;
+    }).join("");
+
+    el("view").innerHTML = `
+      <h2 class="screen-title">Photos for review</h2>
+      <p class="hint">These are the bridge sign photos submitted for your report, grouped by the folder they were saved to. Download what you need, confirm you have received them, then delete them once you're done.</p>
+      ${files.length ? `
+        <div class="notify">
+          <div class="sel-bar">
+            <span id="engSummary" class="sel-summary"></span>
+            <button id="engAll" class="btn small secondary">Select all</button>
+            <button id="engNone" class="btn small secondary">Clear</button>
+          </div>
+          <div class="day-actions">
+            ${fsa ? `<button id="engFolder" class="btn small primary">Save to folder</button>` : ""}
+            <button id="engDownload" class="btn small secondary">Download</button>
+            <button id="engConfirm" class="btn small secondary">Confirm received</button>
+            <button id="engDelete" class="btn small danger">Delete</button>
+          </div>
+        </div>
+        ${groups}
+      ` : `<p class="empty">No photos waiting for review.</p>`}`;
+
+    wireThumbs(el("view"));
+    if (!files.length) return;
+
+    const updateEng = () => {
+      const n = selected().length;
+      el("engSummary").textContent = `${n} photo${n !== 1 ? "s" : ""} selected`;
+    };
+    updateEng();
+
+    el("view").querySelectorAll(".eng-cb").forEach((cb) =>
+      cb.addEventListener("change", () => {
+        if (cb.checked) engSelected.add(cb.dataset.path);
+        else engSelected.delete(cb.dataset.path);
+        updateEng();
+      })
+    );
+    el("view").querySelectorAll(".eng-folder-cb").forEach((cb) =>
+      cb.addEventListener("change", () => {
+        (byFolder.get(cb.dataset.folder) || []).forEach((f) =>
+          cb.checked ? engSelected.add(f.storage_path) : engSelected.delete(f.storage_path));
+        renderEngineer();
+      })
+    );
+    el("engAll").addEventListener("click", () => { engSelected = new Set(allPaths); renderEngineer(); });
+    el("engNone").addEventListener("click", () => { engSelected = new Set(); renderEngineer(); });
+
+    if (fsa) el("engFolder").addEventListener("click", async () => {
+      const f = selected();
+      if (!f.length) return setStatus("Select at least one photo first.", "warn");
+      await exportToFolder(f);
+    });
+    el("engDownload").addEventListener("click", async () => {
+      const f = selected();
+      if (!f.length) return setStatus("Select at least one photo first.", "warn");
+      await downloadAll(f);
+    });
+    el("engConfirm").addEventListener("click", async () => {
+      const f = selected();
+      if (!f.length) return setStatus("Select at least one photo first.", "warn");
+      await confirmReceived(f);
+    });
+    el("engDelete").addEventListener("click", () => {
+      const f = selected();
+      if (!f.length) return setStatus("Select at least one photo first.", "warn");
+      showEngineerDeleteConfirm(f);
+    });
+  }
+
+  async function confirmReceived(files) {
+    const paths = files.map((f) => f.storage_path);
+    const list = paths.map((p) => encodeURIComponent(`"${p}"`)).join(",");
+    setStatus("Confirming…", null, 0);
+    try {
+      await SB.update("captures", `storage_path=in.(${list})`, {
+        confirmed_at: new Date().toISOString(),
+        confirmed_by: SB.currentUser() || "engineer",
+      });
+      setStatus(`Confirmed ${paths.length} photo(s) received.`, "ok");
+      renderEngineer();
+    } catch (e) {
+      setStatus(`Could not confirm: ${e.message}`, "warn", 9000);
+    }
+  }
+
+  function showEngineerDeleteConfirm(files) {
+    const unconfirmed = files.filter((f) => !f.confirmed_at).length;
+    const rows = files.map((f) => `<li>
+        <span class="mono">${esc(f.filename)}</span>
+        ${f.confirmed_at ? `<span class="chip ok">confirmed</span>` : `<span class="chip">not confirmed</span>`}
+      </li>`).join("");
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.innerHTML = `<div class="modal">
+        <h3>Delete ${files.length} photo${files.length > 1 ? "s" : ""}?</h3>
+        <p class="hint">${unconfirmed
+          ? `<strong>Warning: ${unconfirmed} of these ${unconfirmed > 1 ? "have" : "has"} not been confirmed as received.</strong> `
+          : "All of these are confirmed received. "}Deleting removes them for everyone and cannot be undone.</p>
+        <ul class="del-list">${rows}</ul>
+        <div class="modal-actions">
+          <button class="btn secondary" data-mc="cancel">Cancel</button>
+          <button class="btn danger" data-mc="ok">Delete ${files.length}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const close = () => overlay.remove();
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+    overlay.querySelector('[data-mc="cancel"]').addEventListener("click", close);
+    overlay.querySelector('[data-mc="ok"]').addEventListener("click", async () => {
+      close();
+      const paths = files.map((f) => f.storage_path);
+      setStatus(`Deleting ${paths.length} photo(s)…`, null, 0);
+      try {
+        try { await SB.deletePhotos(paths); } catch { /* may already be gone */ }
+        const list = paths.map((p) => encodeURIComponent(`"${p}"`)).join(",");
+        await SB.remove("captures", `storage_path=in.(${list})`);
+        setStatus(`Deleted ${paths.length} photo(s).`, "ok");
+        engSelected = null;
+        renderEngineer();
+      } catch (e) {
+        setStatus(`Delete failed: ${e.message}`, "warn", 9000);
+      }
+    });
+  }
+
   // Confirm + delete whole signs (and their photos).
   function showSignDeleteConfirm(ids) {
     if (!ids.length) return;
@@ -903,21 +1124,29 @@
     if (!paths.length) return;
     const col = kind === "exported" ? "exported_at" : "emailed_at";
     const list = paths.map((p) => encodeURIComponent(`"${p}"`)).join(",");
+    const patch = { [col]: new Date().toISOString() };
+    if (kind === "exported" && lastSavedFolder) patch.saved_folder = lastSavedFolder;
     try {
-      await SB.update("captures", `storage_path=in.(${list})`, { [col]: new Date().toISOString() });
+      await SB.update("captures", `storage_path=in.(${list})`, patch);
     } catch { /* non-fatal: badge just won't update */ }
   }
 
-  // Subject + body for a set of files that may span multiple days.
+  // Subject + body for a set of files, grouped by the folder they were saved
+  // into. The date is already in every filename, so it isn't repeated here.
   function emailSubjectBody(files) {
-    const dset = [...new Set(files.map((f) => f.batch_date))].sort();
-    const subject = dset.length <= 1
-      ? `Bridge sign photos, ${dset[0] || todayStr()}`
-      : `Bridge sign photos, ${dset[0]} to ${dset[dset.length - 1]} (${dset.length} days)`;
-    const sorted = [...files].sort((a, b) =>
-      a.batch_date.localeCompare(b.batch_date) || a.filename.localeCompare(b.filename));
-    const body = "The following sign inspection photos have been added:\n\n" +
-      sorted.map((f) => f.filename).join("\n") + "\n";
+    const subject = `Bridge sign photos (${files.length} photo${files.length === 1 ? "" : "s"})`;
+    const byFolder = new Map();
+    for (const f of files) {
+      const key = f.saved_folder || "Not saved to a folder yet";
+      if (!byFolder.has(key)) byFolder.set(key, []);
+      byFolder.get(key).push(f.filename);
+    }
+    let body = "The following bridge sign photos have been added:\n\n";
+    for (const [folder, names] of byFolder) {
+      body += `Folder: ${folder}\n`;
+      body += names.sort().map((n) => `    ${n}`).join("\n");
+      body += "\n\n";
+    }
     return { subject, body };
   }
 
@@ -945,6 +1174,10 @@
     return SB.downloadPhoto(path);
   }
 
+  // Folder chosen during the last export; recorded on each photo so the
+  // notification email can say where the files were put.
+  let lastSavedFolder = null;
+
   async function exportToFolder(files) {
     try {
       const dir = await window.showDirectoryPicker({ mode: "readwrite" });
@@ -957,7 +1190,8 @@
         await w.close();
         ok++;
       }
-      setStatus(`Saved ${ok} photo(s) to the chosen folder.`, "ok");
+      lastSavedFolder = dir.name || "(chosen folder)";
+      setStatus(`Saved ${ok} photo(s) to “${lastSavedFolder}”.`, "ok");
       return true;
     } catch (e) {
       if (e && e.name === "AbortError") return false;
@@ -967,6 +1201,7 @@
   }
 
   async function downloadAll(files) {
+    lastSavedFolder = "Downloads";
     for (let i = 0; i < files.length; i++) {
       try {
         const blob = await fetchBlob(files[i].storage_path);
@@ -1017,10 +1252,10 @@
       <h2 class="screen-title">Setup: import signs</h2>
       <p class="hint">Load the Excel sheet on the computer. Existing IDs are updated; new ones are added. Do this again whenever the sheet changes.</p>
       <div class="setup-card">
-        <label class="field"><span>Sign type</span>
+        <label class="field"><span>Sheet type</span>
           <select id="typeSel">
+            <option value="bridge">Bridge weight-limit signs (bridge IDs)</option>
             <option value="advance">Advance weight-limit signs</option>
-            <option value="bridge">Bridge weight-limit signs</option>
           </select>
         </label>
         <label class="btn secondary block">Choose Excel / CSV file…
@@ -1071,17 +1306,20 @@
       <details class="setup-card collapsible">
         <summary>Developer settings</summary>
         <p class="hint">For testing only.</p>
+        <label class="check-row"><input type="checkbox" id="advanceToggle" ${showAdvance() ? "checked" : ""} />
+          <span>Show advance weight-limit signs</span></label>
+        <p class="hint">Off by default. The job right now is bridge weight-limit signs, so advance signs stay hidden in the Signs list even if they're imported.</p>
         <label class="check-row"><input type="checkbox" id="composeToggle" ${composeEnabled() ? "checked" : ""} />
           <span>Show the “Compose email” button in Review</span></label>
         <p class="hint">Turn off if automatic “Send email” is working and the mail-app fallback isn't needed.</p>
         <button id="dlMock" class="btn secondary block">Download mock Excel sheet</button>
-        <p class="hint">A sample sheet in the real R12-6 layout (split header, a duplicate ID, an inactive row, and a base-ID grouping row) to test importing.</p>
+        <p class="hint">A sample sheet in the KYTC bridge layout (with a duplicate ID and an empty row) to test importing.</p>
         <button id="clearAll" class="btn danger block">Clear signs &amp; photos</button>
         <p class="hint">Deletes all signs and photos from the database and this device. Kept: your login, the email-sending setup, and saved recipient emails.</p>
       </details>`;
 
     el("fileInput").addEventListener("change", (e) => handleFile(e.target.files[0]));
-    el("typeSel").value = p ? p.type : "advance";
+    el("typeSel").value = p ? p.type : "bridge";
     el("typeSel").addEventListener("change", (e) => { if (App.parsed) App.parsed.type = e.target.value; });
     const sheetSel = el("sheetSel");
     if (sheetSel) sheetSel.addEventListener("change", (e) => reparseSheet(e.target.value));
@@ -1120,6 +1358,13 @@
       } catch (e) { setStatus(`Test failed: ${e.message}`, "warn", 9000); }
     });
     el("logoutBtn").addEventListener("click", doLogout);
+    el("advanceToggle").addEventListener("change", async (e) => {
+      try {
+        await SB.upsert("settings", { key: "show_advance", value: e.target.checked ? "true" : "false" }, "key");
+        await loadSettings();
+        setStatus(e.target.checked ? "Advance signs shown." : "Advance signs hidden.", "ok");
+      } catch (err) { setStatus(`Save failed: ${err.message}`, "warn"); }
+    });
     el("composeToggle").addEventListener("change", async (e) => {
       try {
         await SB.upsert("settings", { key: "compose_enabled", value: e.target.checked ? "true" : "false" }, "key");
@@ -1131,28 +1376,33 @@
     el("clearAll").addEventListener("click", clearAllData);
   }
 
-  // Build a sample workbook in the real R12-6 layout and download it.
+  // Build a sample workbook in the KYTC bridge layout and download it.
+  // Includes a duplicate ID and a data-less row to exercise the import guards.
   function downloadMockSheet() {
+    const head = ["DISTRICT", "COUNTY", "LATITUDE", "LONGITUDE", "OWNERSHIP", "LOAD_RATING_AGENCY",
+      "BRIDGE_ID", "OWNER", "ADMINAREA", "RATINGDATE", "DECK_AREA", "GFP", "NHS", "STATE_LOCAL",
+      "DECADE", "SS_CODE", "DECK_RATING", "SUB_RATING", "SUPER_RATING", "ADT", "FACILITY_CARRIED",
+      "FEATURE_INTERSECT", "BRIDGE_DESCRIPTION", "POSTED", "GROSS_POSTING", "SERVICE_ON", "SERVICE_UNDER"];
+    const r = (district, county, lat, lng, id, carries, over, desc) => {
+      const row = new Array(head.length).fill("");
+      row[0] = district; row[1] = county; row[2] = lat; row[3] = lng; row[6] = id;
+      row[20] = carries; row[21] = over; row[22] = desc; row[23] = "A Open, no restriction";
+      return row;
+    };
     const aoa = [
-      ["Active Status", "ID", "Assembly Location Information", "", "", "", "", "", ""],
-      [],
-      [],
-      ["", "", "County", "Route", "Section", "Direction", "Mile Point", "Side of Road", "Lat, Long"],
-      ["Active", "AW1052508121223", "Scott", "US-0025", "", "Decreasing", 20.656, "Right", "38.433738,-84.5661614"],
-      ["Active", "AW1052508121227", "Scott", "KY-0620", "", "Increasing", 16.537, "Right", " 38.3322507,-84.51439005"],
-      ["Active", "AW1052508121228", "Scott", "US-0025", "", "Increasing", 14.971, "Right", "38.3591820,-84.5639286"],
-      ["Inactive", "AW1052508121229", "Scott", "US-0025", "", "Increasing", 12.0, "Right", "38.3000000,-84.5600000"],
-      ["Active", "AW1202510140833", "Woodford", "US-0062", "", "Decreasing", 5.293, "Right", "38.043665,-84.758290"],
-      ["Active", "AW1202510140833", "Woodford", "US-0062", "", "Decreasing", 5.293, "Right", "38.043665,-84.758290"],
-      ["Active", "AW2604171416", "", "", "", "", "", "", ""],
-      ["Active", "AW2604171416A01", "Fayette", "US-0027", "", "Increasing", 1.2, "Right", "38.100000,-84.500000"],
-      ["Active", "AW2604171416B01", "Fayette", "US-0027", "", "Decreasing", 1.3, "Right", "38.200000,-84.600000"],
-      ["Active", "AW260414155A02", "Madison", "KY-2877", "", "Increasing", 0.75, "Right", "37.6406962,-84.3159329"],
+      head,
+      r("District 07", "Anderson", 38.06436667, -85.01695, "003C00067N", "TRACY RD", "Branch of Benson Creek", "30' SINGLE SPAN WEATHERING STEEL STRINGER"),
+      r("District 07", "Anderson", 38.0256, -84.8818, "003C00068N", "BOND & LILLARD RD", "CEDAR BROOK", "32' SINGLE SPAN WEATHERING STEEL STRINGER"),
+      r("District 07", "Anderson", 38.02694444, -85.109742, "003B00062N", "KY 44", "Crooked Creek", "65'x84'x65' SB42 Continuous"),
+      r("District 07", "Madison", 37.84458333, -84.16118611, "076C00103N", "Doylesville Rd", "BR of Muddy Creek", "57'-6\" Simple Span CB27x48 Box Beams"),
+      r("District 07", "Madison", 37.84458333, -84.16118611, "076C00103N", "Doylesville Rd", "BR of Muddy Creek", "57'-6\" Simple Span CB27x48 Box Beams"),
+      r("", "", "", "", "003C00099N", "", "", ""),
+      r("District 07", "Scott", 38.3591820, -84.5639286, "105B00015N", "US 25", "North Elkhorn Creek", "80' Two Span Concrete Deck Girder"),
     ];
     const ws = XLSX.utils.aoa_to_sheet(aoa);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Master List R12-6");
-    XLSX.writeFile(wb, "mock-signs-R12-6.xlsx");
+    XLSX.utils.book_append_sheet(wb, ws, "Bridges");
+    XLSX.writeFile(wb, "mock-bridges.xlsx");
   }
 
   async function clearAllData() {
@@ -1183,15 +1433,17 @@
   function renderParsedPreview(p) {
     if (!p.rows.length)
       return `<div class="banner warn">No rows with an ID found on this sheet. Try another sheet.</div>`;
+    const isBridge = p.type === "bridge";
+    const col3 = (r) => (isBridge ? r.facility_carried : r.route);
     const head = p.rows.slice(0, 5).map(
-      (r) => `<tr><td>${esc(r.id)}</td><td>${esc(r.county)}</td><td>${esc(r.route)}</td><td>${esc(r.lat)}, ${esc(r.lng)}</td></tr>`
+      (r) => `<tr><td>${esc(r.id)}</td><td>${esc(r.county)}</td><td>${esc(col3(r))}</td><td>${esc(r.lat)}, ${esc(r.lng)}</td></tr>`
     ).join("");
     const bad = p.rows.filter((r) => r.lat == null || r.lng == null).length;
     return `<div class="setup-card">
-        <h3>${p.rows.length} sign(s) found</h3>
+        <h3>${p.rows.length} ${isBridge ? "bridge" : "sign"}(s) found</h3>
         ${bad ? `<div class="banner warn">${bad} row(s) have no usable coordinates; they'll import but won't sort by distance.</div>` : ""}
         <div class="table-scroll"><table class="preview">
-          <thead><tr><th>ID</th><th>County</th><th>Route</th><th>Lat, Long</th></tr></thead>
+          <thead><tr><th>ID</th><th>County</th><th>${isBridge ? "Carries" : "Route"}</th><th>Lat, Long</th></tr></thead>
           <tbody>${head}</tbody></table></div>
         ${p.rows.length > 5 ? `<p class="hint">…and ${p.rows.length - 5} more.</p>` : ""}
         <button id="importBtn" class="btn primary block">Import ${p.rows.length} sign(s)</button>
@@ -1209,7 +1461,7 @@
       workbookCache = XLSX.read(buf, { type: "array" });
       currentSheet = pickBestSheet(workbookCache);
       App.parsed = Object.assign(parseSheet(workbookCache, currentSheet), {
-        type: el("typeSel") ? el("typeSel").value : "advance",
+        type: el("typeSel") ? el("typeSel").value : "bridge",
         sheet: currentSheet,
       });
       setStatus("");
@@ -1222,7 +1474,7 @@
   function reparseSheet(sheet) {
     if (!workbookCache) return;
     currentSheet = sheet;
-    const type = App.parsed ? App.parsed.type : el("typeSel") ? el("typeSel").value : "advance";
+    const type = App.parsed ? App.parsed.type : el("typeSel") ? el("typeSel").value : "bridge";
     App.parsed = Object.assign(parseSheet(workbookCache, sheet), { type, sheet });
     render();
   }
@@ -1234,31 +1486,36 @@
 
   const norm = (v) => String(v == null ? "" : v).trim().toLowerCase();
 
-  // The location columns (County/Route/.../Lat, Long) share a header row, which
-  // may sit BELOW the row holding Active Status / ID. Find that row.
+  // The location columns share a header row, which may sit BELOW the row holding
+  // Active Status / ID (the older advance-sign sheets). Find that row.
   function findGeoRow(aoa) {
     for (let i = 0; i < Math.min(aoa.length, 25); i++) {
       const hits = (aoa[i] || [])
         .map(norm)
-        .filter((c) => /county|route|mile|side of road|lat.*long|long.*lat/.test(c)).length;
+        .filter((c) => /county|route|mile|side of road|lat|long|district|bridge_?id/.test(c)).length;
       if (hits >= 2) return i;
     }
     return -1;
   }
 
-  // Map a header label to our field name.
+  // Map a header label to our field name. Handles both the advance-sign sheet
+  // and the KYTC bridge sheet (BRIDGE_ID, LATITUDE, FACILITY_CARRIED, ...).
   function classify(label) {
-    const c = norm(label);
+    const c = norm(label).replace(/_/g, " ");
     if (!c) return null;
-    if (c === "id" || c.endsWith(" id")) return "id";
+    if (c === "id" || c.endsWith(" id")) return "id";          // ID, BRIDGE ID
     if (/active/.test(c)) return "active_status";
     if (/county/.test(c)) return "county";
+    if (/district/.test(c)) return "district";
+    if (/facility carried/.test(c)) return "facility_carried";
+    if (/feature intersect/.test(c)) return "feature_intersect";
+    if (/description/.test(c)) return "description";
     if (/route/.test(c)) return "route";
     if (/section/.test(c)) return "section";
     if (/direction/.test(c)) return "direction";
     if (/mile/.test(c)) return "mile_point";
-    if (/side/.test(c)) return "side_of_road";
-    if (/lat.*long|long.*lat|coordinate|lat, ?long/.test(c)) return "latlng";
+    if (/side of road/.test(c)) return "side_of_road";
+    if (/lat.*long|long.*lat|coordinate/.test(c)) return "latlng";
     if (/^lat/.test(c)) return "lat";
     if (/^long|^lng/.test(c)) return "lng";
     return null;
@@ -1291,22 +1548,32 @@
       }
       if (map.lat != null && row[map.lat] != null) lat = parseFloat(row[map.lat]);
       if (map.lng != null && row[map.lng] != null) lng = parseFloat(row[map.lng]);
+      const txt = (k) => (map[k] != null ? String(row[map[k]] == null ? "" : row[map[k]]).trim() : "");
       const rec = {
         id,
-        active_status: map.active_status != null ? String(row[map.active_status] || "").trim() || "Active" : "Active",
-        county: map.county != null ? String(row[map.county] || "").trim() : "",
-        route: map.route != null ? String(row[map.route] || "").trim() : "",
-        section: map.section != null ? String(row[map.section] || "").trim() : "",
-        direction: map.direction != null ? String(row[map.direction] || "").trim() : "",
-        mile_point: map.mile_point != null && row[map.mile_point] !== "" ? parseFloat(row[map.mile_point]) : null,
-        side_of_road: map.side_of_road != null ? String(row[map.side_of_road] || "").trim() : "",
+        active_status: map.active_status != null ? txt("active_status") || "Active" : "Active",
+        county: txt("county"),
+        district: txt("district"),
+        facility_carried: txt("facility_carried"),
+        feature_intersect: txt("feature_intersect"),
+        description: txt("description"),
+        route: txt("route"),
+        section: txt("section"),
+        direction: txt("direction"),
+        mile_point: (() => {
+          if (map.mile_point == null || row[map.mile_point] === "" || row[map.mile_point] == null) return null;
+          const n = parseFloat(row[map.mile_point]);
+          return Number.isFinite(n) ? n : null;
+        })(),
+        side_of_road: txt("side_of_road"),
         lat: Number.isFinite(lat) ? lat : null,
         lng: Number.isFinite(lng) ? lng : null,
       };
-      // Skip grouping/header rows that carry an ID but no actual sign data
+      // Skip grouping/header rows that carry an ID but no actual data
       // (e.g. an assembly's base ID sitting above its A01/B01/... sub-signs).
-      const hasData = rec.county || rec.route || rec.section || rec.direction ||
-        rec.side_of_road || rec.mile_point != null || rec.lat != null || rec.lng != null;
+      const hasData = rec.county || rec.route || rec.section || rec.direction || rec.district ||
+        rec.facility_carried || rec.side_of_road || rec.mile_point != null ||
+        rec.lat != null || rec.lng != null;
       if (!hasData) continue;
       rows.push(rec);
     }
@@ -1399,14 +1666,30 @@
     App.signs = [];
     App.remoteCaptures = [];
     App.recipients = [];
+    App.role = null;
+    engSelected = null;
     editing = false;
+    const eng = el("engLogout");
+    if (eng) eng.hidden = true;
     renderLogin();
   }
 
   async function startApp() {
     // Confirm the stored session is still good; otherwise back to login.
     if (!(await SB.ensureSession())) { doLogout(); return; }
+    App.role = SB.currentRole();
+
+    // The engineer gets a single-purpose screen: receive, confirm, delete.
+    if (isEngineer()) {
+      showChrome(false);
+      el("engLogout").hidden = false;
+      engSelected = null;
+      renderEngineer();
+      return;
+    }
+
     showChrome(true);
+    el("engLogout").hidden = true;
     App.screen = "signs";
     el("view").innerHTML = `<p class="hint">Loading…</p>`;
     await loadLocalCaptures();
@@ -1493,6 +1776,7 @@
     initTheme();
     buildThemePanel();
     detectDevice();
+    el("engLogout").addEventListener("click", doLogout);
     el("navSetup").addEventListener("click", () => { App.selectMode = false; App.screen = "setup"; render(); });
     el("navSigns").addEventListener("click", goSigns);
     el("navReview").addEventListener("click", () => { App.selectMode = false; reviewSelected = null; App.screen = "review"; render(); });

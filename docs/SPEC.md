@@ -11,6 +11,28 @@ his report. Today that means fiddling with SharePoint, renaming files by hand, a
 emailing. We want: pick the sign → snap the photo → done. The photo lands in a folder,
 correctly named, and the engineer is notified.
 
+## Current scope (July 2026)
+
+The job is **bridge weight-limit signs**, keyed by **bridge ID**. The advance-sign
+IDs from the older sheet are not meaningful to the work and are hidden by default
+(re-enable under Setup > Developer settings).
+
+Source sheet is the KYTC bridge export, one row per bridge:
+`DISTRICT, COUNTY, LATITUDE, LONGITUDE, BRIDGE_ID, FACILITY_CARRIED,
+FEATURE_INTERSECT, BRIDGE_DESCRIPTION, ...` (other columns are ignored).
+Up to two photos per bridge, same as before.
+
+### Roles
+
+| Role | Login | What they see |
+|------|-------|---------------|
+| Inspector (Brian) | `mustafaalbaree` | Setup, Signs, Review: import, capture, export, email |
+| Engineer | `kytcengineer` | One screen: download photos, confirm received, delete |
+
+Deletion is primarily the **engineer's** call: they confirm receipt, then delete.
+The inspector keeps a delete option, but the engineer's confirmation is what marks
+a photo as safely handed off (shown as an "Engineer confirmed" chip on Review).
+
 ## Two kinds of signs (two datasets)
 
 1. **Advance Weight Limit signs** ("advance signs") — one ID per sign.

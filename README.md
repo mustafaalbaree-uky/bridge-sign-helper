@@ -35,6 +35,18 @@ and access control (see Security below).
 public — it only grants what the database's Row Level Security allows. The secret
 service key is never in this repo.
 
+## Roles
+
+- **Inspector** (`mustafaalbaree`): Setup, Signs, Review. Imports the bridge sheet,
+  photographs bridges in the field, exports and emails the batch.
+- **Engineer** (`kytcengineer` / `testing123`): a single-purpose screen listing the
+  submitted photos grouped by the folder they were saved to. They can download
+  them, **confirm received**, and delete once confirmed. Confirmations show up on
+  the inspector's Review page as an "Engineer confirmed" chip.
+
+Advance weight-limit signs are hidden by default; the current job is bridge signs.
+Toggle them back on under **Setup > Developer settings**.
+
 ## Security
 
 Access requires a **login** (Supabase Auth). Row Level Security and the photo bucket

@@ -19,6 +19,18 @@ window.SB = (() => {
   const isLoggedIn = () => !!(session && session.access_token);
   const currentUser = () => (session ? session.username || session.email : null);
 
+  // Read the signed-in user's metadata straight out of the access token.
+  function tokenClaims() {
+    if (!session || !session.access_token) return {};
+    try {
+      const payload = session.access_token.split(".")[1];
+      return JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")));
+    } catch {
+      return {};
+    }
+  }
+  const currentRole = () => (tokenClaims().user_metadata || {}).role || "inspector";
+
   async function login(email, password, username) {
     const res = await fetch(`${AUTH}token?grant_type=password`, {
       method: "POST",
@@ -33,7 +45,7 @@ window.SB = (() => {
       refresh_token: data.refresh_token,
       expires_at: Date.now() + (data.expires_in || 3600) * 1000,
       email,
-      username: username || email,
+      username: username || (data.user && data.user.user_metadata && data.user.user_metadata.username) || email,
     });
   }
 
@@ -143,5 +155,5 @@ window.SB = (() => {
   // True if we can produce a usable access token (refreshing if needed).
   const ensureSession = async () => !!(await token());
 
-  return { login, logout, refresh, isLoggedIn, ensureSession, currentUser, select, upsert, remove, update, uploadPhoto, downloadPhoto, deletePhotos, invoke };
+  return { login, logout, refresh, isLoggedIn, ensureSession, currentUser, currentRole, select, upsert, remove, update, uploadPhoto, downloadPhoto, deletePhotos, invoke };
 })();
