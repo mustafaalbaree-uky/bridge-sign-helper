@@ -69,6 +69,67 @@
   function preview(blob) {
     return URL.createObjectURL(blob);
   }
+  // Shrink a photo to a thumbnail so Review doesn't hold multi-MB camera images
+  // in memory (and so the cached copy is tiny).
+  async function makeThumb(blob, max = 320) {
+    try {
+      const bmp = await createImageBitmap(blob);
+      const scale = Math.min(1, max / Math.max(bmp.width, bmp.height));
+      const w = Math.max(1, Math.round(bmp.width * scale));
+      const h = Math.max(1, Math.round(bmp.height * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      canvas.getContext("2d").drawImage(bmp, 0, 0, w, h);
+      bmp.close && bmp.close();
+      const out = await new Promise((res) => canvas.toBlob(res, "image/jpeg", 0.72));
+      return out || blob;
+    } catch {
+      return blob;
+    }
+  }
+
+  // Thumbnail for a stored photo, served from the on-device cache when possible.
+  const thumbInFlight = new Map();
+  function thumbFor(path) {
+    if (thumbInFlight.has(path)) return thumbInFlight.get(path);
+    const p = (async () => {
+      try {
+        const cached = await DB.getThumb(path);
+        if (cached) return cached;
+      } catch {}
+      const full = await SB.downloadPhoto(path);
+      const small = await makeThumb(full);
+      try { await DB.setThumb(path, small); } catch {}
+      return small;
+    })().finally(() => thumbInFlight.delete(path));
+    thumbInFlight.set(path, p);
+    return p;
+  }
+
+  // Fill in <img data-thumb="path"> elements a few at a time, so the page paints
+  // immediately and images stream in instead of blocking the render.
+  async function streamThumbs(root, limit = 4) {
+    const nodes = [...(root || document).querySelectorAll("[data-thumb]")];
+    let i = 0;
+    const worker = async () => {
+      while (i < nodes.length) {
+        const node = nodes[i++];
+        if (!node.isConnected) continue;
+        try {
+          const blob = await thumbFor(node.dataset.thumb);
+          if (!node.isConnected) continue;
+          const url = URL.createObjectURL(blob);
+          node.innerHTML = `<img src="${url}" alt="" data-revoke />`;
+          wireThumbs(node);
+        } catch {
+          node.innerHTML = `<span class="of-fail">?</span>`;
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(limit, nodes.length) }, worker));
+  }
+
   function wireThumbs(root) {
     (root || document).querySelectorAll("img[data-revoke]").forEach((img) => {
       if (img.dataset.wired) return;
@@ -108,9 +169,14 @@
     App.localCaptures = await DB.allCaptures();
   }
 
-  // Cache every capture once. Feeds both the signs-list counts and the
-  // "Photos on file" section (so both are instant, no per-click network wait).
-  // Returns true if the per-sign counts changed.
+  // Signs from the on-device cache, for an instant first paint.
+  async function loadCachedSigns() {
+    try {
+      const cached = await DB.allSigns();
+      if (cached.length && !App.signs.length) App.signs = cached;
+    } catch {}
+  }
+
   // Rebuild per-sign counts and completion from the capture cache.
   function recomputeDerived() {
     const counts = {}, done = {}, any = {};
@@ -125,18 +191,38 @@
     for (const id in any) App.signDone[id] = !!done[id];
   }
 
+  // Load the cached capture list from the device so screens can paint at once.
+  async function loadCachedCaptures() {
+    try {
+      const rows = await DB.getMeta("captures");
+      if (Array.isArray(rows) && rows.length) {
+        App.captures = rows;
+        recomputeDerived();
+      }
+    } catch {}
+  }
+
+  // Fetch every capture and cache it. Feeds the signs-list counts, Review, and
+  // "Photos on file". Returns true if anything visible changed.
   async function refreshCaptures() {
     try {
       const rows = await SB.select(
         "captures",
-        "select=sign_id,slot,batch_date,storage_path,captured_at,exported_at,emailed_at&order=batch_date.desc,slot.asc"
+        "select=sign_id,slot,batch_date,storage_path,captured_at,exported_at,emailed_at,saved_folder,confirmed_at,confirmed_by&order=batch_date.desc,slot.asc"
       );
       // A successful empty response is real (everything was deleted), so it
       // must be honored; a failed fetch throws and is handled below.
+      const before = JSON.stringify(App.captures);
       App.captures = rows;
-      const before = JSON.stringify(App.photoCounts);
       recomputeDerived();
-      return JSON.stringify(App.photoCounts) !== before;
+      DB.setMeta("captures", rows).catch(() => {});
+      // Drop cached thumbnails for photos that no longer exist.
+      try {
+        const live = new Set(rows.map((r) => r.storage_path));
+        const gone = JSON.parse(before || "[]").map((r) => r.storage_path).filter((p) => !live.has(p));
+        if (gone.length) DB.dropThumbs(gone).catch(() => {});
+      } catch {}
+      return JSON.stringify(App.captures) !== before;
     } catch {
       return false; // keep whatever we had
     }
@@ -574,16 +660,21 @@
         )
         .join("");
 
-    // Download each image via the login token and swap it in as it arrives.
+    // Swap in cached thumbnails as they arrive; tapping one fetches the full
+    // image only when it's actually opened.
     box.querySelectorAll(".of-thumb").forEach(async (a) => {
       try {
-        const blob = await SB.downloadPhoto(a.dataset.path);
+        const blob = await thumbFor(a.dataset.path);
         if (App.currentSignId !== signId || App.screen !== "capture") return;
-        const url = preview(blob); // kept alive: the anchor opens the full image
-        a.href = url;
-        a.target = "_blank";
-        a.rel = "noopener";
-        a.innerHTML = `<img src="${url}" alt="" />`;
+        a.innerHTML = `<img src="${preview(blob)}" alt="" data-revoke />`;
+        wireThumbs(a);
+        a.addEventListener("click", async (e) => {
+          e.preventDefault();
+          try {
+            const full = await SB.downloadPhoto(a.dataset.path);
+            window.open(URL.createObjectURL(full), "_blank", "noopener");
+          } catch {}
+        });
       } catch {
         a.innerHTML = `<span class="of-fail">?</span>`;
       }
@@ -681,29 +772,32 @@
   // Which day-groups are ticked in Review. null = "select all" on next open.
   let reviewSelected = null;
 
-  async function renderReview() {
-    el("view").innerHTML = `<p class="hint">Loading…</p>`;
-    let remote = [];
-    try {
-      remote = await SB.select("captures", `select=*&order=batch_date.desc,sign_id.asc,slot.asc`);
-    } catch {
-      el("view").innerHTML = `<div class="banner warn">Can't reach the server. Connect to load photos for export.</div>`;
-      return;
+  async function renderReview(opts) {
+    const refresh = !(opts && opts.fromCache);
+    // Paint from the cached capture list first so the page appears instantly,
+    // then reconcile with the server in the background.
+    if (refresh) {
+      if (App.captures.length) {
+        renderReview({ fromCache: true });
+        refreshCaptures().then((changed) => {
+          if (changed && App.screen === "review") renderReview({ fromCache: true });
+        });
+        return;
+      }
+      el("view").innerHTML = `<p class="hint">Loading…</p>`;
+      await refreshCaptures();
+      if (!App.captures.length && !App.online) {
+        el("view").innerHTML = `<div class="banner warn">Can't reach the server. Connect to load photos for export.</div>`;
+        return;
+      }
     }
-    App.remoteCaptures = remote;
-    const files = buildExportList(remote);
+    App.remoteCaptures = App.captures;
+    const files = buildExportList(App.captures);
     const pending = App.localCaptures.filter((c) => c.status !== "synced").length;
     const uploadedLocal = App.localCaptures.filter((c) => c.status === "synced").length;
     const fsa = typeof window.showDirectoryPicker === "function";
     const emailReady = emailConfigured();
     const today = todayStr();
-
-    const thumbs = {};
-    await Promise.all(
-      files.map(async (f) => {
-        try { thumbs[f.storage_path] = preview(await SB.downloadPhoto(f.storage_path)); } catch {}
-      })
-    );
 
     // Group files by capture date, newest day first.
     const byDate = new Map();
@@ -735,7 +829,7 @@
     // perPhoto=true shows each photo's own status + a Delete pill (only when done).
     const fileRow = (f, perPhoto) => `<li class="file-row">
         <input type="checkbox" class="photo-cb" data-path="${esc(f.storage_path)}" data-date="${f.batch_date}" ${reviewSelected.has(f.storage_path) ? "checked" : ""} />
-        ${thumbs[f.storage_path] ? `<img src="${thumbs[f.storage_path]}" alt="" data-revoke />` : `<div class="thumb-missing">?</div>`}
+        <div class="thumb-slot" data-thumb="${esc(f.storage_path)}"><span class="of-spin"></span></div>
         <div class="file-meta">
           <div class="file-name">${esc(f.filename)}</div>
           <div class="file-sub">${new Date(f.captured_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</div>
@@ -803,7 +897,7 @@
           <p class="hint">Deletes only this phone's copies of photos already on the server. Photos waiting to upload are kept.</p>` : ""}
       ` : `<p class="empty">No photos on the server yet.</p>`}`;
 
-    wireThumbs(el("view"));
+    streamThumbs(el("view"));
     if (pending) el("syncNow").addEventListener("click", syncAllPending);
     if (!files.length) return;
 
@@ -942,26 +1036,30 @@
   // they were received, then delete them once confirmed.
   let engSelected = null;
 
-  async function renderEngineer() {
-    el("view").innerHTML = `<p class="hint">Loading…</p>`;
-    let remote = [];
-    try {
-      remote = await SB.select("captures", `select=*&order=batch_date.desc,sign_id.asc,slot.asc`);
-    } catch {
-      el("view").innerHTML = `<div class="banner warn">Can't reach the server. Try again when you're online.</div>`;
-      return;
+  async function renderEngineer(opts) {
+    // Paint from cache first, then reconcile with the server.
+    if (!(opts && opts.fromCache)) {
+      if (App.captures.length) {
+        renderEngineer({ fromCache: true });
+        refreshCaptures().then((changed) => {
+          if (changed && isEngineer()) renderEngineer({ fromCache: true });
+        });
+        return;
+      }
+      el("view").innerHTML = `<p class="hint">Loading…</p>`;
+      await loadCachedCaptures();
+      await refreshCaptures();
+      if (!App.captures.length && !App.online) {
+        el("view").innerHTML = `<div class="banner warn">Can't reach the server. Try again when you're online.</div>`;
+        return;
+      }
     }
-    const files = buildExportList(remote);
+    const files = buildExportList(App.captures);
     const fsa = typeof window.showDirectoryPicker === "function";
     const allPaths = new Set(files.map((f) => f.storage_path));
     if (engSelected === null) engSelected = new Set(allPaths);
     else for (const p of [...engSelected]) if (!allPaths.has(p)) engSelected.delete(p);
     const selected = () => files.filter((f) => engSelected.has(f.storage_path));
-
-    const thumbs = {};
-    await Promise.all(files.map(async (f) => {
-      try { thumbs[f.storage_path] = preview(await SB.downloadPhoto(f.storage_path)); } catch {}
-    }));
 
     // Group by the folder Brian saved them into, so the engineer sees the same
     // organization described in the notification email.
@@ -974,7 +1072,7 @@
 
     const row = (f) => `<li class="file-row">
         <input type="checkbox" class="eng-cb" data-path="${esc(f.storage_path)}" ${engSelected.has(f.storage_path) ? "checked" : ""} />
-        ${thumbs[f.storage_path] ? `<img src="${thumbs[f.storage_path]}" alt="" data-revoke />` : `<div class="thumb-missing">?</div>`}
+        <div class="thumb-slot" data-thumb="${esc(f.storage_path)}"><span class="of-spin"></span></div>
         <div class="file-meta">
           <div class="file-name">${esc(f.filename)}</div>
           <div class="pill-row">${f.confirmed_at
@@ -1016,7 +1114,7 @@
         ${groups}
       ` : `<p class="empty">No photos waiting for review.</p>`}`;
 
-    wireThumbs(el("view"));
+    streamThumbs(el("view"));
     if (!files.length) return;
 
     const updateEng = () => {
@@ -1796,11 +1894,13 @@
     showSignedInChrome(true);
     App.screen = "signs";
     el("view").innerHTML = `<p class="hint">Loading…</p>`;
-    await loadLocalCaptures();
-    await loadSigns();
-    loadRecipients();
-    await loadSettings();
-    await refreshCaptures();
+
+    // Paint from on-device caches first so the list appears immediately.
+    await Promise.all([loadLocalCaptures(), loadCachedSigns(), loadCachedCaptures()]);
+    if (App.signs.length) render();
+
+    // Then refresh everything from the server in parallel and repaint.
+    await Promise.all([loadSigns(), loadSettings(), refreshCaptures(), loadRecipients()]);
     render();
     if (App.localCaptures.some((c) => c.status !== "synced")) syncAllPending();
   }

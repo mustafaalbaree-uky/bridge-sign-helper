@@ -1,15 +1,20 @@
-// On-device storage (IndexedDB). Two stores:
+// On-device storage (IndexedDB). Stores:
 //   captures — offline-first photo queue; blobs live here until a flush clears them.
 //   signs    — local cache of the sign list so the field app works without signal.
+//   meta     — small cached payloads (e.g. the server capture list) for instant paint.
+//   thumbs   — downscaled thumbnails keyed by storage path, so Review doesn't
+//              re-download full-size photos every time it opens.
 //
 // Capture record:
 //   { key, signId, slot (1|2), batchDate 'YYYY-MM-DD', blob, capturedAt (ISO),
 //     captureLat, captureLng, storagePath, status 'pending'|'synced'|'error', error }
 window.DB = (() => {
   const DB_NAME = "bridge-sign-helper";
-  const DB_VERSION = 2;
+  const DB_VERSION = 3;
   const CAPS = "captures";
   const SIGNS = "signs";
+  const META = "meta";
+  const THUMBS = "thumbs";
   let dbp = null;
 
   function open() {
@@ -20,6 +25,8 @@ window.DB = (() => {
         const db = req.result;
         if (!db.objectStoreNames.contains(CAPS)) db.createObjectStore(CAPS, { keyPath: "key" });
         if (!db.objectStoreNames.contains(SIGNS)) db.createObjectStore(SIGNS, { keyPath: "id" });
+        if (!db.objectStoreNames.contains(META)) db.createObjectStore(META);
+        if (!db.objectStoreNames.contains(THUMBS)) db.createObjectStore(THUMBS);
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
@@ -62,5 +69,13 @@ window.DB = (() => {
         rows.forEach((r) => s.put(r));
       }),
     allSigns: () => tx(SIGNS, "readonly", (s) => reqP(s.getAll())),
+    // small cached payloads
+    getMeta: (k) => tx(META, "readonly", (s) => reqP(s.get(k))),
+    setMeta: (k, v) => tx(META, "readwrite", (s) => reqP(s.put(v, k))),
+    // thumbnails
+    getThumb: (k) => tx(THUMBS, "readonly", (s) => reqP(s.get(k))),
+    setThumb: (k, blob) => tx(THUMBS, "readwrite", (s) => reqP(s.put(blob, k))),
+    dropThumbs: (keys) =>
+      tx(THUMBS, "readwrite", (s) => keys.forEach((k) => s.delete(k))),
   };
 })();
