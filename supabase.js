@@ -87,6 +87,23 @@ window.SB = (() => {
     return res.json();
   }
 
+  // Same as select(), but pages past the API's per-response row cap (1000 by
+  // default) so large tables come back complete.
+  async function selectAll(table, query = "", pageSize = 1000) {
+    const out = [];
+    for (let from = 0; ; from += pageSize) {
+      const to = from + pageSize - 1;
+      const res = await fetch(REST + table + (query ? `?${query}` : ""), {
+        headers: await headers({ Range: `${from}-${to}`, "Range-Unit": "items" }),
+      });
+      if (!res.ok) throw new Error(`select ${table}: ${res.status} ${await res.text()}`);
+      const rows = await res.json();
+      out.push(...rows);
+      if (rows.length < pageSize) return out;
+      if (out.length > 100000) return out; // safety stop
+    }
+  }
+
   async function upsert(table, rows, onConflict) {
     const q = onConflict ? `?on_conflict=${onConflict}` : "";
     const res = await fetch(REST + table + q, {
@@ -155,5 +172,5 @@ window.SB = (() => {
   // True if we can produce a usable access token (refreshing if needed).
   const ensureSession = async () => !!(await token());
 
-  return { login, logout, refresh, isLoggedIn, ensureSession, currentUser, currentRole, select, upsert, remove, update, uploadPhoto, downloadPhoto, deletePhotos, invoke };
+  return { login, logout, refresh, isLoggedIn, ensureSession, currentUser, currentRole, select, selectAll, upsert, remove, update, uploadPhoto, downloadPhoto, deletePhotos, invoke };
 })();

@@ -154,7 +154,7 @@
   // ---- data loading ----------------------------------------------------------
   async function loadSigns() {
     try {
-      const rows = await SB.select("signs", "select=*&order=county.asc,route.asc,mile_point.asc");
+      const rows = await SB.selectAll("signs", "select=*&order=county.asc,route.asc,mile_point.asc");
       App.signs = rows;
       App.online = true;
       await DB.putSigns(rows);
@@ -206,7 +206,7 @@
   // "Photos on file". Returns true if anything visible changed.
   async function refreshCaptures() {
     try {
-      const rows = await SB.select(
+      const rows = await SB.selectAll(
         "captures",
         "select=sign_id,slot,batch_date,storage_path,captured_at,exported_at,emailed_at,saved_folder,confirmed_at,confirmed_by&order=batch_date.desc,slot.asc"
       );
@@ -1278,7 +1278,7 @@
   // history disappears with them.
   async function stampCompletedSigns() {
     try {
-      const rows = await SB.select("captures", "select=sign_id,exported_at,emailed_at");
+      const rows = await SB.selectAll("captures", "select=sign_id,exported_at,emailed_at");
       const done = {};
       for (const r of rows) {
         const complete = !!(r.exported_at && r.emailed_at);
@@ -1465,7 +1465,10 @@
       ${p ? renderParsedPreview(p) : ""}
       <div class="setup-card">
         <h3>Current database</h3>
-        <p class="hint">${App.online ? `${App.signs.length} sign(s) loaded from the server.` : "Offline. Can't reach the server."}</p>
+        <p class="hint">${App.online
+          ? `${App.signs.length} sign(s) loaded from the server` +
+            (App.signs.length ? ` (${App.signs.filter((s) => (s.type || "advance") === "bridge").length} bridge, ${App.signs.filter((s) => (s.type || "advance") === "advance").length} advance).` : ".")
+          : "Offline. Can't reach the server."}</p>
       </div>
       <div class="setup-card">
         <p class="hint">Signed in as <strong>${esc(SB.currentUser() || "")}</strong></p>
@@ -1608,7 +1611,7 @@
     try {
       let paths = [];
       try {
-        paths = (await SB.select("captures", "select=storage_path")).map((r) => r.storage_path).filter(Boolean);
+        paths = (await SB.selectAll("captures", "select=storage_path")).map((r) => r.storage_path).filter(Boolean);
       } catch {}
       if (paths.length) { try { await SB.deletePhotos(paths); } catch {} }
       // Only signs and their photos. Left untouched: auth users (logins),
@@ -1786,7 +1789,7 @@
     try {
       let existing = new Set();
       try {
-        const cur = await SB.select("signs", "select=id");
+        const cur = await SB.selectAll("signs", "select=id");
         existing = new Set(cur.map((r) => r.id));
       } catch {}
       // Collapse duplicate IDs within the sheet (last occurrence wins) — Postgres
